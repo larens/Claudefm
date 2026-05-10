@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Claudiofm",
+  "version": "0.0.1",
+  "description": "Claudiofm side panel radio",
+  "action": {
+    "default_title": "Claudiofm"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "audioCapture",
+    "nativeMessaging",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://music.pjmp3.com/*"
+  ]
+}

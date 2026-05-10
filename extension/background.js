@@ -1,0 +1,510 @@
+const HOST_NAME = "com.claudiofm.host";
+const MEMORY_TEMPLATE_PATH = "/Users/lairuisi/workspace/Claudiofm/claudiofm-chrome-extension/docs/superpowers/specs/music_user_memory.md";
+
+const ports = new Set();
+const pendingLocationResolvers = new Map();
+
+let providerTabId = null;
+let externalInterruptActive = false;
+let welcomeInFlight = false;
+
+async function getPreferences() {
+  const { preferences } = await chrome.storage.local.get("preferences");
+  return {
+    interruptAware: preferences?.interruptAware ?? true,
+    ...preferences,
+  };
+}
+
+function formatLocalDateKey(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+}
+
+function broadcast(msg) {
+  ports.forEach((p) => {
+    try {
+      p.postMessage(msg);
+    } catch {}
+  });
+}
+
+function sendNative(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendNativeMessage(HOST_NAME, payload, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        resolve({ ok: false, error: err.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function appendDailyConversation(kind, userText, result) {
+  return await sendNative({
+    type: "appendDailyConversation",
+    kind,
+    userText: userText ?? "",
+    result: result ?? null,
+  });
+}
+
+function normalizeTrackQuery(track) {
+  const name = String(track?.name || track?.query || "").trim();
+  const artist = String(track?.artist || "").trim();
+  return { name, artist };
+}
+
+function cleanProviderValue(value) {
+  return String(value ?? "")
+    .replace(/^[\s`'"]+|[\s`'"]+$/g, "")
+    .trim();
+}
+
+function normalizeForCompare(value) {
+  return cleanProviderValue(value).toLowerCase().replace(/\s+/g, "");
+}
+
+function scoreResolvedTrack(query, candidate) {
+  const queryName = normalizeForCompare(query?.name || "");
+  const queryArtist = normalizeForCompare(query?.artist || "");
+  const candidateName = normalizeForCompare(candidate?.name || "");
+  const candidateArtist = normalizeForCompare(candidate?.artist || "");
+
+  let score = 0;
+  if (!candidateName) return score;
+  if (queryName && candidateName === queryName) score += 10;
+  else if (queryName && candidateName.includes(queryName)) score += 6;
+  else if (queryName && queryName.includes(candidateName)) score += 4;
+
+  if (queryArtist && candidateArtist === queryArtist) score += 8;
+  else if (queryArtist && candidateArtist.includes(queryArtist)) score += 5;
+  else if (queryArtist && queryArtist.includes(candidateArtist)) score += 3;
+
+  return score;
+}
+
+function extractSongIds(searchHtml) {
+  const ids = [];
+  const seen = new Set();
+  const matches = searchHtml.matchAll(/song\.php\?id=(\d+)/g);
+  for (const match of matches) {
+    const id = match?.[1] ? String(match[1]).trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= 5) break;
+  }
+  return ids;
+}
+
+function parseSongPage(songHtml, fallbackTrack) {
+  const urlMatch = songHtml.match(/url\s*:\s*[`'"]([^`'"]+)[`'"]/i);
+  const nameMatch = songHtml.match(/(?:name|title)\s*:\s*[`'"]([^`'"]+)[`'"]/i);
+  const artistMatch = songHtml.match(/artist\s*:\s*[`'"]([^`'"]+)[`'"]/i);
+  const coverMatch = songHtml.match(/cover\s*:\s*[`'"]([^`'"]+)[`'"]/i);
+
+  const streamUrl = cleanProviderValue(urlMatch?.[1] || "");
+  const name = cleanProviderValue(nameMatch?.[1] || fallbackTrack?.name || "");
+  const artist = cleanProviderValue(artistMatch?.[1] || fallbackTrack?.artist || "");
+  const cover = cleanProviderValue(coverMatch?.[1] || "");
+
+  if (!streamUrl) return null;
+
+  return {
+    provider: "paojiao",
+    track: { name, artist },
+    streamUrl,
+    cover,
+    durationMs: 0,
+  };
+}
+
+async function resolveTrackViaFetch(track) {
+  const { name, artist } = normalizeTrackQuery(track);
+  if (!name) return null;
+
+  try {
+    const searchQuery = encodeURIComponent([name, artist].filter(Boolean).join(" "));
+    const searchUrl = `https://music.pjmp3.com/search.php?keyword=${searchQuery}&n=1`;
+    console.log("[background] resolveTrackViaFetch search", { name, artist, searchUrl });
+
+    const searchResp = await fetch(searchUrl, {
+      credentials: "include",
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    if (!searchResp.ok) {
+      console.warn("[background] search failed", searchResp.status, { name, artist });
+      return null;
+    }
+
+    const searchHtml = await searchResp.text();
+    const songIds = extractSongIds(searchHtml);
+    if (!songIds.length) {
+      console.warn("[background] no song ID found", { name, artist });
+      return null;
+    }
+
+    let bestResult = null;
+    let bestScore = -1;
+
+    for (const songId of songIds) {
+      const songUrl = `https://music.pjmp3.com/song.php?id=${songId}`;
+      console.log("[background] resolveTrackViaFetch song", { songId, songUrl, name, artist });
+
+      const songResp = await fetch(songUrl, {
+        credentials: "include",
+        headers: {
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+      if (!songResp.ok) {
+        console.warn("[background] song fetch failed", songResp.status, { songId, name, artist });
+        continue;
+      }
+
+      const songHtml = await songResp.text();
+      const parsed = parseSongPage(songHtml, { name, artist });
+      if (!parsed?.streamUrl) continue;
+
+      const score = scoreResolvedTrack({ name, artist }, parsed.track);
+      console.log("[background] resolveTrackViaFetch matches", {
+        songId,
+        score,
+        streamUrl: parsed.streamUrl,
+        resolvedName: parsed.track.name,
+        resolvedArtist: parsed.track.artist,
+      });
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestResult = parsed;
+      }
+
+      if (score >= 18) break;
+    }
+
+    return bestResult;
+  } catch (error) {
+    console.error("[background] resolveTrackViaFetch error", error, { name, artist });
+    return null;
+  }
+}
+
+async function ensureProviderTab() {
+  if (providerTabId != null) {
+    try {
+      const tab = await chrome.tabs.get(providerTabId);
+      if (tab && !tab.discarded) return providerTabId;
+    } catch {
+      providerTabId = null;
+    }
+  }
+
+  const tab = await chrome.tabs.create({
+    url: "https://music.pjmp3.com/",
+    active: false,
+  });
+  providerTabId = tab.id;
+
+  await new Promise((r) => setTimeout(r, 2000));
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: providerTabId },
+      files: ["providers/paojiao/adapter.js"],
+    });
+  } catch {}
+
+  await new Promise((r) => setTimeout(r, 2000));
+
+  return providerTabId;
+}
+
+async function resolveTrackViaProviderTab(track) {
+  const tabId = await ensureProviderTab();
+  const result = await new Promise((resolve) => {
+    let attempts = 0;
+    const trySend = () => {
+      chrome.tabs.sendMessage(
+        tabId,
+        { type: "paojiao.resolveTrack", track },
+        (resp) => {
+          const err = chrome.runtime.lastError;
+          if (err && err.message.includes("Receiving end does not exist")) {
+            attempts++;
+            if (attempts < 20) {
+              setTimeout(trySend, 500);
+              return;
+            }
+            resolve(null);
+            return;
+          }
+          resolve(resp ?? null);
+        }
+      );
+    };
+    trySend();
+  });
+  return result;
+}
+
+function demoStreamUrl(track) {
+  return "";
+}
+
+async function resolveTrackWithFallback(track) {
+  const directResult = await resolveTrackViaFetch(track);
+  if (directResult?.streamUrl) return directResult;
+
+  const tabResult = await resolveTrackViaProviderTab(track);
+  if (tabResult?.streamUrl) return tabResult;
+
+  console.warn("[background] resolveTrack failed", { track });
+  return null;
+}
+
+async function onChat(text) {
+  const { turnCount } = await chrome.storage.local.get("turnCount");
+  const nextTurnCount = Number(turnCount ?? 0) + 1;
+  await chrome.storage.local.set({ turnCount: nextTurnCount });
+
+  const { profileSummary } = await chrome.storage.local.get("profileSummary");
+  const prefs = await getPreferences();
+
+  const payload = {
+    type: "chat",
+    text,
+    djName: prefs.djName ?? "Claudio",
+    provider: "paojiao",
+    profileSummary: profileSummary ?? "",
+    turnCountSinceLastProfileRefresh: nextTurnCount % 3,
+    forceProfileRefresh: nextTurnCount % 3 === 0,
+  };
+
+  const resp = await sendNative(payload);
+  if (!resp?.ok) {
+    broadcast({
+      type: "chatResult",
+      result: { say: resp?.error || "Claude Code 不可用或 Host 未安装。", play: [] },
+    });
+    return;
+  }
+
+  if (resp.profileSummary) {
+    await chrome.storage.local.set({ profileSummary: resp.profileSummary });
+  }
+
+  broadcast({ type: "chatResult", result: resp.result });
+  try {
+    await appendDailyConversation("chat", text, resp.result);
+  } catch {}
+
+  if (nextTurnCount % 10 === 0) {
+    try {
+      await sendNative({
+        type: "optimizeMemoryFile",
+        djName: prefs.djName ?? "Claudio",
+        profileSummary: resp.profileSummary ?? profileSummary ?? "",
+        templatePath: MEMORY_TEMPLATE_PATH,
+      });
+    } catch {}
+  }
+}
+
+async function exportMemoryMd() {
+  const { profileSummary } = await chrome.storage.local.get("profileSummary");
+  const prefs = await getPreferences();
+  return await sendNative({
+    type: "optimizeMemoryFile",
+    djName: prefs.djName ?? "Claudio",
+    profileSummary: profileSummary ?? "",
+    templatePath: MEMORY_TEMPLATE_PATH,
+  });
+}
+
+async function readMemoryFile() {
+  return await sendNative({ type: "readMemoryFile" });
+}
+
+function requestLocationFromPort(port) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingLocationResolvers.delete(port);
+      resolve({ ok: false, error: "timeout" });
+    }, 12000);
+
+    pendingLocationResolvers.set(port, (payload) => {
+      clearTimeout(timer);
+      pendingLocationResolvers.delete(port);
+      resolve(payload);
+    });
+
+    try {
+      port.postMessage({ type: "requestLocation" });
+    } catch {
+      clearTimeout(timer);
+      pendingLocationResolvers.delete(port);
+      resolve({ ok: false, error: "port postMessage failed" });
+    }
+  });
+}
+
+async function maybeWelcome(port) {
+  if (welcomeInFlight) return;
+  const today = formatLocalDateKey();
+  const { lastWelcomeDate } = await chrome.storage.local.get("lastWelcomeDate");
+  if (lastWelcomeDate === today) return;
+
+  welcomeInFlight = true;
+  try {
+    const prefs = await getPreferences();
+    const { profileSummary } = await chrome.storage.local.get("profileSummary");
+
+    const loc = await requestLocationFromPort(port);
+    const lat = loc?.coords?.latitude;
+    const lon = loc?.coords?.longitude;
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+
+    const payload = {
+      type: "welcome",
+      djName: prefs.djName ?? "Claudio",
+      provider: "paojiao",
+      profileSummary: profileSummary ?? "",
+      templatePath: MEMORY_TEMPLATE_PATH,
+      latitude: hasCoords ? lat : null,
+      longitude: hasCoords ? lon : null,
+    };
+
+    const resp = await sendNative(payload);
+    if (resp?.ok) {
+      if (resp.profileSummary) {
+        await chrome.storage.local.set({ profileSummary: resp.profileSummary });
+      }
+      broadcast({ type: "chatResult", result: resp.result });
+      try {
+        await appendDailyConversation("welcome", "", resp.result);
+      } catch {}
+    } else {
+      broadcast({
+        type: "chatResult",
+        result: { say: resp?.error || "欢迎语生成失败。", play: [] },
+      });
+    }
+
+    await chrome.storage.local.set({ lastWelcomeDate: today });
+  } finally {
+    welcomeInFlight = false;
+  }
+}
+
+async function updateExternalAudioState() {
+  const prefs = await getPreferences();
+  if (!prefs.interruptAware) return;
+
+  const audibleTabs = await chrome.tabs.query({ audible: true });
+  const active = audibleTabs.some((t) => {
+    if (t.id == null) return false;
+    if (t.id === providerTabId) return false;
+    if (t.url?.startsWith("chrome-extension://")) return false;
+    return true;
+  });
+
+  if (active && !externalInterruptActive) {
+    externalInterruptActive = true;
+    broadcast({ type: "interruptStart" });
+  } else if (!active && externalInterruptActive) {
+    externalInterruptActive = false;
+    broadcast({ type: "interruptEnd" });
+  }
+}
+
+chrome.runtime.onConnect.addListener(async (port) => {
+  ports.add(port);
+  port.onDisconnect.addListener(() => {
+    ports.delete(port);
+    pendingLocationResolvers.delete(port);
+  });
+  port.onMessage.addListener((msg) => {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "ready") {
+      void maybeWelcome(port);
+      return;
+    }
+    if (msg.type === "locationResult") {
+      const resolve = pendingLocationResolvers.get(port);
+      if (resolve) resolve(msg);
+    }
+  });
+});
+
+chrome.action.onClicked.addListener(async (tab) => {
+  await chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  (async () => {
+    try {
+      if (!msg || typeof msg !== "object") {
+        sendResponse({ ok: false, error: "invalid message" });
+        return;
+      }
+      if (msg.type === "chat") {
+        await onChat(msg.text);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "resolveTrack") {
+        const res = await resolveTrackWithFallback(msg.track);
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "exportMemoryMd") {
+        const res = await exportMemoryMd();
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "readMemoryFile") {
+        const res = await readMemoryFile();
+        sendResponse(res);
+        return;
+      }
+      sendResponse({ ok: false, error: "unknown message type" });
+    } catch (error) {
+      const message = error?.message ? String(error.message) : String(error);
+      broadcast({
+        type: "chatResult",
+        result: { say: `发生错误：${message}`, play: [] },
+      });
+      sendResponse({ ok: false, error: message });
+    }
+  })();
+  return true;
+});
+
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo) => {
+  if ("audible" in changeInfo) await updateExternalAudioState();
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (tabId === providerTabId) providerTabId = null;
+  await updateExternalAudioState();
+});
+
+chrome.tabs.onActivated.addListener(async () => {
+  await updateExternalAudioState();
+});
