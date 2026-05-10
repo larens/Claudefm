@@ -83,6 +83,18 @@ def find_claude_binary():
             return p
     return ""
 
+def get_claude_timeout_seconds():
+    raw = os.environ.get("CLAUDE_TIMEOUT_SECONDS") or os.environ.get("CLAUDE_TIMEOUT") or ""
+    try:
+        v = int(str(raw).strip())
+        if v < 10:
+            return 10
+        if v > 600:
+            return 600
+        return v
+    except Exception:
+        return 180
+
 def sanitize_markdown_output(text, required_heading):
     raw = str(text or "").strip()
     if not raw:
@@ -411,7 +423,20 @@ def run_claude(prompt, schema):
         "--output-format", "json",
         "--json-schema", json.dumps(schema)
     ]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=90, env=build_exec_env())
+    timeout_seconds = get_claude_timeout_seconds()
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=build_exec_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "error": f"claude timed out after {timeout_seconds}s. This usually means Claude CLI is not logged in, is blocked by network/proxy, or is taking too long to respond. Try running `claude --version` and `claude --bare -p \"你好\"` in Terminal, or increase CLAUDE_TIMEOUT_SECONDS.",
+        }
     if result.returncode != 0:
         return {"ok": False, "error": result.stderr or f"claude exited {result.returncode}"}
 
@@ -531,14 +556,20 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
 
     claude_path = find_claude_binary()
     args = [claude_path, "--bare", "-p", prompt]
+    timeout_seconds = get_claude_timeout_seconds()
     try:
         result = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=timeout_seconds,
             env=build_exec_env(),
         )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "error": f"claude timed out after {timeout_seconds}s. Try running `claude --bare -p \"你好\"` in Terminal, or increase CLAUDE_TIMEOUT_SECONDS.",
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
