@@ -1,6 +1,10 @@
 html,
 body {
-  background: transparent;
+  margin: 0;
+  padding: 0;
+  color-scheme: light dark;
+  background: Canvas;
+  color: CanvasText;
 }
 
 [hidden] {

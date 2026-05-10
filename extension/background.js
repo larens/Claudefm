@@ -1,5 +1,5 @@
 const HOST_NAME = "com.claudiofm.host";
-const MEMORY_TEMPLATE_PATH = "/Users/lairuisi/workspace/Claudiofm/claudiofm-chrome-extension/docs/superpowers/specs/music_user_memory.md";
+const MEMORY_TEMPLATE_PATH = "";
 
 const ports = new Set();
 const pendingLocationResolvers = new Map();
@@ -7,6 +7,7 @@ const pendingLocationResolvers = new Map();
 let providerTabId = null;
 let externalInterruptActive = false;
 let welcomeInFlight = false;
+let autoRecommendDone = false;
 
 async function getPreferences() {
   const { preferences } = await chrome.storage.local.get("preferences");
@@ -44,8 +45,18 @@ function sendNative(payload) {
     chrome.runtime.sendNativeMessage(HOST_NAME, payload, (response) => {
       const err = chrome.runtime.lastError;
       if (err) {
+        void chrome.storage.local.set({
+          nativeHostAvailable: false,
+          nativeHostLastError: err.message,
+        });
         resolve({ ok: false, error: err.message });
         return;
+      }
+      if (response?.ok) {
+        void chrome.storage.local.set({
+          nativeHostAvailable: true,
+          nativeHostLastError: "",
+        });
       }
       resolve(response);
     });
@@ -298,10 +309,16 @@ async function onChat(text) {
 
   const resp = await sendNative(payload);
   if (!resp?.ok) {
+    const extensionId = chrome.runtime.id;
+    const hint =
+      resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed")
+        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-macos.json 里的 extensionId，并运行：node host/install-macos.mjs（执行后需要完全退出并重启浏览器）`
+        : `Claude Code 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install-macos.mjs`;
     broadcast({
       type: "chatResult",
       result: { say: resp?.error || "Claude Code 不可用或 Host 未安装。", play: [] },
     });
+    broadcast({ type: "chatResult", result: { say: hint, play: [] } });
     return;
   }
 
@@ -366,12 +383,39 @@ function requestLocationFromPort(port) {
 
 async function maybeWelcome(port) {
   if (welcomeInFlight) return;
-  const today = formatLocalDateKey();
-  const { lastWelcomeDate } = await chrome.storage.local.get("lastWelcomeDate");
-  if (lastWelcomeDate === today) return;
+  if (autoRecommendDone) return;
 
   welcomeInFlight = true;
   try {
+    const ensure = await sendNative({
+      type: "ensureMusicFile",
+      templatePath: MEMORY_TEMPLATE_PATH,
+    });
+    if (!ensure?.ok) {
+      const extensionId = chrome.runtime.id;
+      broadcast({
+        type: "chatResult",
+        result: { say: ensure?.error || "初始化 music.md 失败。", play: [] },
+      });
+      broadcast({
+        type: "chatResult",
+        result: {
+          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-macos.json 的 extensionId 后执行：node host/install-macos.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
+          play: [],
+        },
+      });
+      return;
+    }
+    if (ensure.created) {
+      broadcast({
+        type: "chatResult",
+        result: {
+          say: `已在 ~/Documents/Claudiofm/ 初始化 music.md（模板来自 ${MEMORY_TEMPLATE_PATH}）。`,
+          play: [],
+        },
+      });
+    }
+
     const prefs = await getPreferences();
     const { profileSummary } = await chrome.storage.local.get("profileSummary");
 
@@ -399,14 +443,13 @@ async function maybeWelcome(port) {
       try {
         await appendDailyConversation("welcome", "", resp.result);
       } catch {}
+      autoRecommendDone = true;
     } else {
       broadcast({
         type: "chatResult",
         result: { say: resp?.error || "欢迎语生成失败。", play: [] },
       });
     }
-
-    await chrome.storage.local.set({ lastWelcomeDate: today });
   } finally {
     welcomeInFlight = false;
   }

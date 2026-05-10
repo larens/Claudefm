@@ -1,8 +1,67 @@
 #!/usr/bin/env node
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+function resolveTemplatePath(inputPath) {
+  const provided = inputPath ? String(inputPath) : "";
+  if (provided && fs.existsSync(provided)) return provided;
+  const fallback = path.resolve(__dirname, "..", "docs", "superpowers", "specs", "music_user_memory.md");
+  if (fs.existsSync(fallback)) return fallback;
+  return "";
+}
+
+function buildExecEnv() {
+  const home = os.homedir();
+  const extras = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin")
+  ];
+  const current = String(process.env.PATH || "");
+  const nextPath = Array.from(new Set([...extras, ...current.split(":").filter(Boolean)])).join(":");
+  return { ...process.env, HOME: process.env.HOME || home, PATH: nextPath };
+}
+
+function findClaudeBinary() {
+  const envBin = process.env.CLAUDE_BIN || process.env.CLAUDE_PATH;
+  if (envBin && fs.existsSync(envBin)) return String(envBin);
+  for (const shell of ["zsh", "bash"]) {
+    try {
+      const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
+      if (!shellPath) continue;
+      const found = spawnSync(shellPath, ["-lc", "command -v claude 2>/dev/null || true"], {
+        encoding: "utf8",
+        env: buildExecEnv(),
+      }).stdout.trim();
+      if (found && fs.existsSync(found)) return found;
+    } catch {}
+  }
+  const home = os.homedir();
+  const candidates = [
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+    path.join(home, ".npm-global", "bin", "claude"),
+    path.join(home, "workspace", ".npm-global", "bin", "claude"),
+    path.join(home, ".local", "bin", "claude"),
+    path.join(home, ".bun", "bin", "claude"),
+    path.join(home, ".cargo", "bin", "claude")
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return "claude";
+}
 
 function sanitizeMarkdownOutput(text, requiredHeading) {
   let raw = String(text || "").trim();
@@ -144,16 +203,7 @@ function buildPrompt(input) {
 
 function runClaude(prompt, schema) {
   return new Promise((resolve) => {
-    const getClaudePath = () => {
-      const { execSync } = require("child_process");
-      try {
-        return execSync("zsh -l -c 'which claude'", { encoding: "utf8" }).trim();
-      } catch {
-        return "claude";
-      }
-    };
-
-    const claudePath = "/Users/lairuisi/workspace/.npm-global/bin/claude";
+    const claudePath = findClaudeBinary();
     const args = [
       "--bare",
       "-p",
@@ -163,14 +213,17 @@ function runClaude(prompt, schema) {
       "--json-schema",
       JSON.stringify(schema)
     ];
-    const env = {
-      ...process.env,
-      PATH: "/Users/lairuisi/workspace/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-      HOME: "/Users/lairuisi"
-    };
+    const env = buildExecEnv();
     const child = spawn(claudePath, args, { stdio: ["ignore", "pipe", "pipe"], env });
     let out = "";
     let err = "";
+    child.on("error", (e) => {
+      const message = e && e.message ? String(e.message) : String(e);
+      resolve({
+        ok: false,
+        error: `Claude CLI not found or failed to start (${claudePath}): ${message}`
+      });
+    });
     child.stdout.on("data", (d) => {
       out += d.toString("utf8");
     });
@@ -388,6 +441,20 @@ function readMemoryFile() {
   return { ok: true, path: filePath, content: sliced };
 }
 
+function ensureMusicFile(input) {
+  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
+  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
+  const filePath = path.join(folder, "music.md");
+  if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
+  if (!templatePath || !fs.existsSync(templatePath)) {
+    return { ok: false, error: `template not found: ${templatePath}` };
+  }
+  fs.mkdirSync(folder, { recursive: true });
+  const template = String(fs.readFileSync(templatePath, "utf8") || "").trimEnd();
+  fs.writeFileSync(filePath, template + "\n", "utf8");
+  return { ok: true, path: filePath, created: true };
+}
+
 function exportMemoryMd(input) {
   const djRaw = input && input.djName ? String(input.djName) : "Claudio";
   const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
@@ -416,7 +483,7 @@ function optimizeMemoryFile(input) {
   const djRaw = input && input.djName ? String(input.djName) : "Claudio";
   const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
   const summary = input && input.profileSummary ? String(input.profileSummary).trim() : "";
-  const templatePath = input && input.templatePath ? String(input.templatePath) : "";
+  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
   if (!templatePath || !fs.existsSync(templatePath)) {
     return Promise.resolve({ ok: false, error: `template not found: ${templatePath}` });
   }
@@ -461,18 +528,18 @@ function optimizeMemoryFile(input) {
     "现在开始输出整理后的 Markdown："
   ].join("\n");
 
-  const claudePath = "/Users/lairuisi/workspace/.npm-global/bin/claude";
+  const claudePath = findClaudeBinary();
   const args = ["--bare", "-p", prompt];
-  const env = {
-    ...process.env,
-    PATH: "/Users/lairuisi/workspace/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-    HOME: "/Users/lairuisi"
-  };
+  const env = buildExecEnv();
 
   return new Promise((resolve) => {
     const child = spawn(claudePath, args, { stdio: ["ignore", "pipe", "pipe"], env });
     let out = "";
     let err = "";
+    child.on("error", (e) => {
+      const message = e && e.message ? String(e.message) : String(e);
+      resolve({ ok: false, error: `Claude CLI not found or failed to start (${claudePath}): ${message}` });
+    });
     child.stdout.on("data", (d) => {
       out += d.toString("utf8");
     });
@@ -522,6 +589,10 @@ readNativeMessageStream(async (msg) => {
     }
     if (msg.type === "readMemoryFile") {
       sendNativeMessage(readMemoryFile());
+      return;
+    }
+    if (msg.type === "ensureMusicFile") {
+      sendNativeMessage(ensureMusicFile(msg));
       return;
     }
     if (msg.type === "welcome") {

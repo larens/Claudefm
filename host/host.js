@@ -1,8 +1,70 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function resolveTemplatePath(inputPath) {
+  const provided = inputPath ? String(inputPath) : "";
+  if (provided && fs.existsSync(provided)) return provided;
+  const fallback = path.resolve(__dirname, "..", "docs", "superpowers", "specs", "music_user_memory.md");
+  if (fs.existsSync(fallback)) return fallback;
+  return "";
+}
+
+function buildExecEnv() {
+  const home = os.homedir();
+  const extras = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin"),
+  ];
+  const current = String(process.env.PATH || "");
+  const nextPath = Array.from(new Set([...extras, ...current.split(":").filter(Boolean)])).join(":");
+  return { ...process.env, HOME: process.env.HOME || home, PATH: nextPath };
+}
+
+function findClaudeBinary() {
+  const envBin = process.env.CLAUDE_BIN || process.env.CLAUDE_PATH;
+  if (envBin && fs.existsSync(envBin)) return String(envBin);
+  for (const shell of ["zsh", "bash"]) {
+    try {
+      const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
+      if (!shellPath) continue;
+      const found = spawnSync(shellPath, ["-lc", "command -v claude 2>/dev/null || true"], {
+        encoding: "utf8",
+        env: buildExecEnv(),
+      }).stdout.trim();
+      if (found && fs.existsSync(found)) return found;
+    } catch {}
+  }
+  const home = os.homedir();
+  const candidates = [
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+    path.join(home, ".npm-global", "bin", "claude"),
+    path.join(home, "workspace", ".npm-global", "bin", "claude"),
+    path.join(home, ".local", "bin", "claude"),
+    path.join(home, ".bun", "bin", "claude"),
+    path.join(home, ".cargo", "bin", "claude"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return "claude";
+}
 
 function sanitizeMarkdownOutput(text, requiredHeading) {
   let raw = String(text || "").trim();
@@ -83,6 +145,20 @@ function readMusicMemoryFile(maxChars = 6000) {
   } catch {
     return "";
   }
+}
+
+function ensureMusicFile(templatePath) {
+  const resolvedTemplatePath = resolveTemplatePath(templatePath);
+  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
+  const filePath = path.join(folder, "music.md");
+  if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
+  if (!resolvedTemplatePath || !fs.existsSync(resolvedTemplatePath)) {
+    return { ok: false, error: `template not found: ${resolvedTemplatePath}` };
+  }
+  fs.mkdirSync(folder, { recursive: true });
+  const template = String(fs.readFileSync(resolvedTemplatePath, "utf8") || "").trimEnd();
+  fs.writeFileSync(filePath, template + "\n", "utf8");
+  return { ok: true, path: filePath, created: true };
 }
 
 async function getLocationName(latitude, longitude) {
@@ -325,6 +401,8 @@ function buildPrompt(input) {
 
 function runClaude(prompt, schema) {
   return new Promise((resolve) => {
+    const env = buildExecEnv();
+    const claudePath = findClaudeBinary();
     const args = [
       "--bare",
       "-p",
@@ -335,9 +413,13 @@ function runClaude(prompt, schema) {
       JSON.stringify(schema)
     ];
 
-    const child = spawn("claude", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(claudePath, args, { stdio: ["ignore", "pipe", "pipe"], env });
     let out = "";
     let err = "";
+    child.on("error", (e) => {
+      const message = e?.message ? String(e.message) : String(e);
+      resolve({ ok: false, error: `Claude CLI not found or failed to start (${claudePath}): ${message}` });
+    });
     child.stdout.on("data", (d) => {
       out += d.toString("utf8");
     });
@@ -367,7 +449,7 @@ readNativeMessageStream(async (msg) => {
       const djRaw = msg.djName ? String(msg.djName) : "Claudio";
       const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
       const summary = msg.profileSummary ? String(msg.profileSummary).trim() : "";
-      const templatePath = msg.templatePath ? String(msg.templatePath) : "";
+      const templatePath = resolveTemplatePath(msg.templatePath ? String(msg.templatePath) : "");
       if (!templatePath || !fs.existsSync(templatePath)) {
         sendNativeMessage({ ok: false, error: `template not found: ${templatePath}` });
         return;
@@ -401,14 +483,15 @@ readNativeMessageStream(async (msg) => {
       ].join("\n");
 
       const args = ["--bare", "-p", prompt];
-      const env = {
-        ...process.env,
-        PATH: "/Users/lairuisi/workspace/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        HOME: "/Users/lairuisi"
-      };
-      const child = spawn("/Users/lairuisi/workspace/.npm-global/bin/claude", args, { stdio: ["ignore", "pipe", "pipe"], env });
+      const env = buildExecEnv();
+      const claudeBin = findClaudeBinary();
+      const child = spawn(claudeBin, args, { stdio: ["ignore", "pipe", "pipe"], env });
       let out = "";
       let err = "";
+      child.on("error", (e) => {
+        const message = e?.message ? String(e.message) : String(e);
+        sendNativeMessage({ ok: false, error: `Claude CLI not found or failed to start (${claudeBin}): ${message}` });
+      });
       child.stdout.on("data", (d) => {
         out += d.toString("utf8");
       });
@@ -458,6 +541,16 @@ readNativeMessageStream(async (msg) => {
       const maxChars = 20000;
       const sliced = content.length > maxChars ? content.slice(-maxChars) : content;
       sendNativeMessage({ ok: true, path: filePath, content: sliced });
+    } catch (e) {
+      const message = e?.message ? String(e.message) : String(e);
+      sendNativeMessage({ ok: false, error: message });
+    }
+    return;
+  }
+  if (msg.type === "ensureMusicFile") {
+    try {
+      const templatePath = msg.templatePath ? String(msg.templatePath) : "";
+      sendNativeMessage(ensureMusicFile(templatePath));
     } catch (e) {
       const message = e?.message ? String(e.message) : String(e);
       sendNativeMessage({ ok: false, error: message });

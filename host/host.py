@@ -8,6 +8,80 @@ import re
 import datetime
 import urllib.request
 import urllib.parse
+import shutil
+
+def resolve_template_path(input_path):
+    provided = str(input_path or "")
+    if provided and os.path.isfile(provided):
+        return provided
+    base = os.path.dirname(os.path.abspath(__file__))
+    fallback = os.path.abspath(os.path.join(base, "..", "docs", "superpowers", "specs", "music_user_memory.md"))
+    if os.path.isfile(fallback):
+        return fallback
+    return ""
+
+def build_exec_env():
+    home = os.path.expanduser("~")
+    extras = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        os.path.join(home, ".npm-global", "bin"),
+        os.path.join(home, ".local", "bin"),
+        os.path.join(home, ".bun", "bin"),
+        os.path.join(home, ".cargo", "bin"),
+    ]
+    current = os.environ.get("PATH", "")
+    merged = []
+    for p in extras + current.split(":"):
+        if p and p not in merged:
+            merged.append(p)
+    env = dict(os.environ)
+    env["HOME"] = os.environ.get("HOME", home)
+    env["PATH"] = ":".join(merged)
+    return env
+
+def find_claude_binary():
+    env_bin = os.environ.get("CLAUDE_BIN") or os.environ.get("CLAUDE_PATH")
+    if env_bin and os.path.isfile(env_bin):
+        return env_bin
+    which = shutil.which("claude")
+    if which:
+        return which
+    for shell in ("zsh", "bash"):
+        shell_path = shutil.which(shell)
+        if not shell_path:
+            continue
+        try:
+            result = subprocess.run(
+                [shell_path, "-lc", "command -v claude 2>/dev/null || true"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=build_exec_env(),
+            )
+            candidate = str(result.stdout or "").strip()
+            if candidate and os.path.isfile(candidate):
+                return candidate
+        except Exception:
+            pass
+    home = os.path.expanduser("~")
+    candidates = [
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+        os.path.join(home, ".npm-global", "bin", "claude"),
+        os.path.join(home, "workspace", ".npm-global", "bin", "claude"),
+        os.path.join(home, ".local", "bin", "claude"),
+        os.path.join(home, ".bun", "bin", "claude"),
+        os.path.join(home, ".cargo", "bin", "claude"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return ""
 
 def sanitize_markdown_output(text, required_heading):
     raw = str(text or "").strip()
@@ -303,8 +377,33 @@ def parse_songs_from_text(text):
                     break
     return songs[:10]
 
+def extract_structured_from_claude_payload(payload):
+    if not isinstance(payload, dict):
+        return None
+    structured = payload.get("structured_output")
+    if isinstance(structured, dict):
+        return structured
+    if "say" in payload and "play" in payload and "memory" in payload:
+        return payload
+    raw = payload.get("result", None)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                obj = json.loads(s)
+                if isinstance(obj, dict) and "say" in obj and "play" in obj and "memory" in obj:
+                    return obj
+            except Exception:
+                return None
+    return None
+
 def run_claude(prompt, schema):
-    claude_path = "/Users/lairuisi/workspace/.npm-global/bin/claude"
+    claude_path = find_claude_binary()
+    if not claude_path:
+        return {
+            "ok": False,
+            "error": "Claude CLI not found: please install Claude Code so that `claude` is available in PATH, or set CLAUDE_PATH/CLAUDE_BIN to the full executable path.",
+        }
     args = [
         claude_path,
         "--bare",
@@ -312,19 +411,22 @@ def run_claude(prompt, schema):
         "--output-format", "json",
         "--json-schema", json.dumps(schema)
     ]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=60,
-                          env={"PATH": "/Users/lairuisi/workspace/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-                               "HOME": "/Users/lairuisi"})
+    result = subprocess.run(args, capture_output=True, text=True, timeout=90, env=build_exec_env())
     if result.returncode != 0:
         return {"ok": False, "error": result.stderr or f"claude exited {result.returncode}"}
 
     try:
         payload = json.loads(result.stdout)
-        structured = payload.get("structured_output")
+        if isinstance(payload, dict):
+            if payload.get("is_error") is True or payload.get("subtype") in ("error", "failed"):
+                message = payload.get("result") or payload.get("error") or payload.get("message") or "claude error"
+                return {"ok": False, "error": str(message)}
+
+        structured = extract_structured_from_claude_payload(payload)
         if structured:
             return {"ok": True, "result": structured}
 
-        text_result = payload.get("result", "")
+        text_result = payload.get("result", "") if isinstance(payload, dict) else ""
         songs = parse_songs_from_text(text_result)
         if songs:
             return {
@@ -338,9 +440,15 @@ def run_claude(prompt, schema):
                 }
             }
 
+        detail = ""
+        if isinstance(payload, dict):
+            detail = payload.get("result") or payload.get("message") or payload.get("subtype") or ""
+        detail = str(detail)[:240]
+        if detail:
+            return {"ok": False, "error": f"No structured output and could not parse songs from text: {detail}"}
         return {"ok": False, "error": "No structured output and could not parse songs from text"}
     except json.JSONDecodeError:
-        return {"ok": False, "error": f"invalid json from claude: {result.stdout[:200]}"}
+        return {"ok": False, "error": f"invalid json from claude: {result.stdout[:500]}"}
 
 def export_memory_md(dj_name, profile_summary):
     home = os.path.expanduser("~")
@@ -379,6 +487,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
     out_path = os.path.join(folder, "music.md")
     os.makedirs(folder, exist_ok=True)
 
+    template_path = resolve_template_path(template_path)
     if not template_path or not os.path.isfile(template_path):
         return {"ok": False, "error": f"template not found: {template_path}"}
 
@@ -420,7 +529,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
         "现在开始输出整理后的 Markdown："
     ])
 
-    claude_path = "/Users/lairuisi/workspace/.npm-global/bin/claude"
+    claude_path = find_claude_binary()
     args = [claude_path, "--bare", "-p", prompt]
     try:
         result = subprocess.run(
@@ -428,10 +537,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
             capture_output=True,
             text=True,
             timeout=90,
-            env={
-                "PATH": "/Users/lairuisi/workspace/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-                "HOME": "/Users/lairuisi",
-            },
+            env=build_exec_env(),
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -521,6 +627,22 @@ def read_memory_file(max_chars=20000):
         content = content[-max_chars:]
     return {"ok": True, "path": file_path, "content": content}
 
+def ensure_music_file(template_path):
+    home = os.path.expanduser("~")
+    folder = os.path.join(home, "Documents", "Claudiofm")
+    file_path = os.path.join(folder, "music.md")
+    if os.path.isfile(file_path):
+        return {"ok": True, "path": file_path, "created": False}
+    template_path = resolve_template_path(template_path)
+    if not template_path or not os.path.isfile(template_path):
+        return {"ok": False, "error": f"template not found: {template_path}"}
+    os.makedirs(folder, exist_ok=True)
+    with open(template_path, "r", encoding="utf-8") as f:
+        template = f.read()
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(str(template or "").rstrip() + "\n")
+    return {"ok": True, "path": file_path, "created": True}
+
 def main():
     while True:
         msg = read_message()
@@ -591,6 +713,13 @@ def main():
         if mtype == "readMemoryFile":
             try:
                 resp = read_memory_file()
+                send_message(resp)
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
+        if mtype == "ensureMusicFile":
+            try:
+                resp = ensure_music_file(msg.get("templatePath", ""))
                 send_message(resp)
             except Exception as e:
                 send_message({"ok": False, "error": str(e)})
