@@ -334,6 +334,15 @@ function buildInterludeItem(text, tracks) {
   };
 }
 
+function buildSegueItem(text) {
+  return {
+    kind: "speech",
+    name: "DJ 推荐语",
+    artist: "",
+    text: String(text || "").trim(),
+  };
+}
+
 async function getPreferences() {
   const { preferences } = await chrome.storage.local.get("preferences");
   return preferences ?? {};
@@ -1257,15 +1266,23 @@ async function requestLyricInterlude(tracks) {
 }
 
 function speak(text) {
-  if (!text) return;
-  if (!("speechSynthesis" in window)) return;
-  refreshVoiceCache();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "zh-CN";
-  const v = pickVoiceById(ttsVoiceId);
-  if (v) u.voice = v;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
+  const s = String(text || "").trim();
+  if (!s) return;
+  if (speechActive) return;
+  void (async () => {
+    const modelOk = await playModelTtsBlocking(s);
+    if (modelOk) return;
+    if (!("speechSynthesis" in window)) return;
+    refreshVoiceCache();
+    const u = new SpeechSynthesisUtterance(s);
+    u.lang = "zh-CN";
+    const v = pickVoiceById(ttsVoiceId);
+    if (v) u.voice = v;
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
+    window.speechSynthesis.speak(u);
+  })();
 }
 
 function shouldSpeakSegue() {
@@ -1293,12 +1310,14 @@ async function handleAssistantResult(result) {
   if (result.reason) parts.push(result.reason);
   if (parts.length) appendMessage("assistant", parts.join("\n\n"));
 
-  if (result.segue && shouldSpeakSegue()) {
+  const hasTracks = Array.isArray(result.play) && result.play.length > 0;
+  const shouldPrefixSegue = hasTracks && queueIndex === -1 && queue.length === 0 && result.segue;
+  if (!shouldPrefixSegue && result.segue && shouldSpeakSegue()) {
     segueSpokenInQueue += 1;
     speak(result.segue);
   }
 
-  if (Array.isArray(result.play) && result.play.length) {
+  if (hasTracks) {
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
     setHint(`已推荐 ${result.play.length} 首歌曲，可点歌单查看/播放`);
@@ -1306,13 +1325,22 @@ async function handleAssistantResult(result) {
       segueSpokenInQueue = 0;
       resetLyricSegment();
     }
-    queue = queue.concat(
-      result.play.map((t) => ({
+    const nextItems = [];
+    if (shouldPrefixSegue) {
+      const item = buildSegueItem(result.segue);
+      if (item.text) {
+        nextItems.push(item);
+        segueSpokenInQueue += 1;
+      }
+    }
+    nextItems.push(
+      ...result.play.map((t) => ({
         ...t,
         streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
         provider: t?.provider || "pending",
       }))
     );
+    queue = queue.concat(nextItems);
     renderQueue();
     if (queueIndex === -1) {
       await playAt(0);

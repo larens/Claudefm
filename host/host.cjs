@@ -175,13 +175,18 @@ function buildPrompt(input) {
   const profile = input.profileSummary || "";
   const scene = input.scene || "";
   const force = Boolean(input.forceProfileRefresh);
+  const forceRecommend = Boolean(input.forceRecommend);
+  const listFile = readListFile();
+  const listMd = listFile && listFile.ok ? String(listFile.content || "") : "";
+  const memMd = readMusicMemoryFile();
 
   const instructions = [
     `你是 Claudiofm 的 DJ ${dj}。回复必须是中文。`,
-    "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应，并推荐 5-10 首适合当前场景的歌曲。",
+    "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
     `当前音源来源偏好：${provider}。`,
     "必须输出 JSON，字段遵循给定 schema。",
-    "play 数组长度必须在 5 到 10 之间。",
+    "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
+    "当 forceRecommend=false 时：只有在用户明确在聊音乐/想听歌/要推荐/要歌单时才推荐 5-10 首歌；否则 play 输出空数组，segue 输出空字符串。",
     "每首歌只输出 name/artist；album/query/provider 可选。",
     "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
     force ? "这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。" : ""
@@ -189,6 +194,15 @@ function buildPrompt(input) {
 
   return [
     instructions.join("\n"),
+    "",
+    "【forceRecommend】",
+    forceRecommend ? "true" : "false",
+    "",
+    "【历史播放歌单（list.md 摘要）】",
+    listMd.trim() || "(空)",
+    "",
+    "【历史记忆文件（music.md 摘要）】",
+    memMd.trim() || "(空)",
     "",
     "【画像摘要】",
     profile || "(空)",
@@ -223,6 +237,192 @@ function runClaude(prompt, schema) {
         ok: false,
         error: `Claude CLI not found or failed to start (${claudePath}): ${message}`
       });
+    });
+    child.stdout.on("data", (d) => {
+      out += d.toString("utf8");
+    });
+    child.stderr.on("data", (d) => {
+      err += d.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        resolve({ ok: false, error: err || `claude exited ${code}` });
+        return;
+      }
+      const payload = safeJsonParse(out);
+      const structured = payload && payload.structured_output ? payload.structured_output : null;
+      if (!structured) {
+        resolve({ ok: false, error: "claude output missing structured_output" });
+        return;
+      }
+      resolve({ ok: true, result: structured });
+    });
+  });
+}
+
+let cachedClaudeModelFlag = undefined;
+function getClaudeModelFlag() {
+  if (cachedClaudeModelFlag !== undefined) return cachedClaudeModelFlag;
+  const claudePath = findClaudeBinary();
+  try {
+    const env = buildExecEnv();
+    const res = spawnSync(claudePath, ["--help"], { encoding: "utf8", env });
+    const text = `${String(res.stdout || "")}\n${String(res.stderr || "")}`;
+    if (text.includes("--model")) {
+      cachedClaudeModelFlag = "--model";
+      return cachedClaudeModelFlag;
+    }
+    if (/\s-m[, \t].*model/i.test(text)) {
+      cachedClaudeModelFlag = "-m";
+      return cachedClaudeModelFlag;
+    }
+  } catch {}
+  cachedClaudeModelFlag = "";
+  return cachedClaudeModelFlag;
+}
+
+function extractModelStrings(obj, out) {
+  if (obj == null) return;
+  if (typeof obj === "string") {
+    const s = String(obj).trim();
+    if (!s) return;
+    if (/tts/i.test(s)) {
+      out.add(s);
+      return;
+    }
+    if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(s)) {
+      out.add(s);
+      return;
+    }
+    return;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((v) => extractModelStrings(v, out));
+    return;
+  }
+  if (typeof obj === "object") {
+    Object.entries(obj).forEach(([k, v]) => {
+      const key = String(k || "").trim().toLowerCase();
+      if (
+        [
+          "model",
+          "models",
+          "default_model",
+          "defaultmodel",
+          "tts_model",
+          "ttsmodel",
+          "speech_model",
+          "speechmodel",
+        ].includes(key)
+      ) {
+        extractModelStrings(v, out);
+      } else {
+        extractModelStrings(v, out);
+      }
+    });
+  }
+}
+
+function listConfiguredModels() {
+  const home = os.homedir();
+  const paths = [
+    path.join(home, ".config", "claude", "config.json"),
+    path.join(home, ".config", "claude", "settings.json"),
+    path.join(home, ".claude", "config.json"),
+    path.join(home, ".claude.json"),
+  ];
+  const found = new Set();
+  for (const p of paths) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const data = JSON.parse(fs.readFileSync(p, "utf8"));
+      extractModelStrings(data, found);
+    } catch {}
+  }
+  const envModel = process.env.CLAUDIOFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
+  if (envModel) found.add(String(envModel).trim());
+  return Array.from(found).map((m) => String(m).trim()).filter(Boolean).sort();
+}
+
+function pickTtsModels() {
+  const envModel = process.env.CLAUDIOFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
+  const configured = listConfiguredModels();
+  const preferred = [];
+  if (envModel) preferred.push(String(envModel).trim());
+  const exact = "xiaomi/mimo-v2.5-tts";
+  if (configured.includes(exact) && !preferred.includes(exact)) preferred.push(exact);
+  configured.forEach((m) => {
+    if (preferred.includes(m)) return;
+    if (/tts/i.test(m)) preferred.push(m);
+  });
+  configured.forEach((m) => {
+    if (preferred.includes(m)) return;
+    preferred.push(m);
+  });
+  return preferred.filter(Boolean);
+}
+
+function buildTtsSchema() {
+  return {
+    type: "object",
+    properties: { mime: { type: "string" }, base64: { type: "string" } },
+    required: ["mime", "base64"],
+  };
+}
+
+function buildTtsPrompt(text) {
+  let s = String(text || "").trim();
+  if (s.length > 520) s = s.slice(0, 520).trimEnd();
+  return [
+    "你是一个文本转语音（TTS）模型。",
+    "请将【输入文本】合成为音频，并只输出 JSON，字段严格遵循 schema：",
+    "- mime: 音频 MIME 类型，优先使用 audio/wav（24kHz, mono, 16-bit PCM），也可用 audio/mpeg",
+    "- base64: 音频二进制数据的 base64（不要加 data: 前缀，不要换行）",
+    "要求：",
+    "- 语音为中文普通话，语气自然，适合电台 DJ 口播。",
+    "- 禁止输出任何额外说明文字。",
+    "",
+    "【输入文本】",
+    s,
+  ].join("\n");
+}
+
+function sniffAudioMime(buf) {
+  if (!buf || buf.length < 16) return "";
+  if (buf.slice(0, 4).toString("ascii") === "RIFF" && buf.slice(8, 12).toString("ascii") === "WAVE") return "audio/wav";
+  if (buf.slice(0, 3).toString("ascii") === "ID3") return "audio/mpeg";
+  if (buf[0] === 0xff && buf[1] === 0xfb) return "audio/mpeg";
+  if (buf.slice(0, 4).toString("ascii") === "OggS") return "audio/ogg";
+  return "";
+}
+
+function decodeAudioBase64(b64) {
+  const s = String(b64 || "").replace(/\s+/g, "").trim();
+  if (!s) return null;
+  try {
+    const buf = Buffer.from(s, "base64");
+    if (!buf || !buf.length) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+function runClaudeWithOptionalModel(prompt, schema, model) {
+  return new Promise((resolve) => {
+    const claudePath = findClaudeBinary();
+    const args = ["--bare"];
+    const modelFlag = getClaudeModelFlag();
+    const modelStr = model ? String(model).trim() : "";
+    if (modelFlag && modelStr) args.push(modelFlag, modelStr);
+    args.push("-p", prompt, "--output-format", "json", "--json-schema", JSON.stringify(schema));
+    const env = buildExecEnv();
+    const child = spawn(claudePath, args, { stdio: ["ignore", "pipe", "pipe"], env });
+    let out = "";
+    let err = "";
+    child.on("error", (e) => {
+      const message = e && e.message ? String(e.message) : String(e);
+      resolve({ ok: false, error: `Claude CLI not found or failed to start (${claudePath}): ${message}` });
     });
     child.stdout.on("data", (d) => {
       out += d.toString("utf8");
@@ -928,6 +1128,46 @@ readNativeMessageStream(async (msg) => {
       sendNativeMessage({ ok: true, result: { text } });
       return;
     }
+    if (msg.type === "tts") {
+      const text = msg.text ? String(msg.text).trim() : "";
+      if (!text) {
+        sendNativeMessage({ ok: false, error: "empty text" });
+        return;
+      }
+      const schema = buildTtsSchema();
+      const prompt = buildTtsPrompt(text);
+      const models = pickTtsModels();
+      const tried = [];
+      let lastError = "";
+      if (models.length) {
+        for (const m of models.slice(0, 4)) {
+          tried.push(m);
+          const resp = await runClaudeWithOptionalModel(prompt, schema, m);
+          if (!resp.ok) {
+            lastError = resp.error ? String(resp.error) : "";
+            continue;
+          }
+          const mime = resp?.result?.mime ? String(resp.result.mime).trim() : "";
+          const b64 = resp?.result?.base64 ? String(resp.result.base64).trim() : "";
+          const buf = decodeAudioBase64(b64);
+          const guessed = sniffAudioMime(buf);
+          if (!buf || !guessed) {
+            lastError = "invalid audio base64";
+            continue;
+          }
+          if (buf.length > 4 * 1024 * 1024) {
+            lastError = "audio too large";
+            continue;
+          }
+          sendNativeMessage({ ok: true, audio: { mime: guessed || mime || "audio/wav", base64: b64 }, model: m });
+          return;
+        }
+        sendNativeMessage({ ok: false, error: lastError || "tts synthesis failed", modelsTried: tried });
+        return;
+      }
+      sendNativeMessage({ ok: false, error: "no tts model configured", models: listConfiguredModels() });
+      return;
+    }
     if (msg.type === "welcome") {
       const schema = buildSchema();
       const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
@@ -942,6 +1182,7 @@ readNativeMessageStream(async (msg) => {
         scene,
         djName: dj,
         forceProfileRefresh: false,
+        forceRecommend: true,
         text: "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 5-10 首适合现在的歌。"
       });
 

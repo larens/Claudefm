@@ -9,6 +9,7 @@ import datetime
 import urllib.request
 import urllib.parse
 import shutil
+import base64
 
 def resolve_template_path(input_path):
     provided = str(input_path or "")
@@ -94,6 +95,213 @@ def get_claude_timeout_seconds():
         return v
     except Exception:
         return 180
+
+def get_claude_model_flag():
+    if hasattr(get_claude_model_flag, "_cached"):
+        return getattr(get_claude_model_flag, "_cached")
+    claude_path = find_claude_binary()
+    if not claude_path:
+        setattr(get_claude_model_flag, "_cached", "")
+        return ""
+    help_text = ""
+    try:
+        result = subprocess.run(
+            [claude_path, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            env=build_exec_env(),
+        )
+        help_text = "\n".join([str(result.stdout or ""), str(result.stderr or "")])
+    except Exception:
+        help_text = ""
+    flag = ""
+    if "--model" in help_text:
+        flag = "--model"
+    elif re.search(r"(^|\s)-m[,\s].*model", help_text, re.IGNORECASE):
+        flag = "-m"
+    setattr(get_claude_model_flag, "_cached", flag)
+    return flag
+
+def extract_model_strings(obj, out):
+    if obj is None:
+        return
+    if isinstance(obj, str):
+        s = obj.strip()
+        if not s:
+            return
+        if re.search(r"tts", s, re.IGNORECASE):
+            out.add(s)
+            return
+        if re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", s):
+            out.add(s)
+            return
+        return
+    if isinstance(obj, list):
+        for v in obj:
+            extract_model_strings(v, out)
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = str(k or "").strip().lower()
+            if key in (
+                "model",
+                "models",
+                "default_model",
+                "defaultmodel",
+                "tts_model",
+                "ttsmodel",
+                "speech_model",
+                "speechmodel",
+            ):
+                extract_model_strings(v, out)
+            else:
+                extract_model_strings(v, out)
+        return
+
+def list_configured_models():
+    home = os.path.expanduser("~")
+    paths = [
+        os.path.join(home, ".config", "claude", "config.json"),
+        os.path.join(home, ".config", "claude", "settings.json"),
+        os.path.join(home, ".claude", "config.json"),
+        os.path.join(home, ".claude.json"),
+    ]
+    found = set()
+    for p in paths:
+        try:
+            if not os.path.isfile(p):
+                continue
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            extract_model_strings(data, found)
+        except Exception:
+            continue
+    env_model = os.environ.get("CLAUDIOFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
+    if env_model:
+        found.add(str(env_model).strip())
+    return [m for m in sorted(found) if m]
+
+def pick_tts_models():
+    env_model = os.environ.get("CLAUDIOFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
+    configured = list_configured_models()
+    preferred = []
+    if env_model:
+        preferred.append(str(env_model).strip())
+    exact = "xiaomi/mimo-v2.5-tts"
+    if exact in configured and exact not in preferred:
+        preferred.append(exact)
+    for m in configured:
+        if m in preferred:
+            continue
+        if re.search(r"tts", m, re.IGNORECASE):
+            preferred.append(m)
+    for m in configured:
+        if m in preferred:
+            continue
+        preferred.append(m)
+    return [m for m in preferred if m]
+
+def build_tts_schema():
+    return {
+        "type": "object",
+        "properties": {
+            "mime": {"type": "string"},
+            "base64": {"type": "string"}
+        },
+        "required": ["mime", "base64"]
+    }
+
+def build_tts_prompt(text):
+    s = str(text or "").strip()
+    if len(s) > 520:
+        s = s[:520].rstrip()
+    return "\n".join([
+        "你是一个文本转语音（TTS）模型。",
+        "请将【输入文本】合成为音频，并只输出 JSON，字段严格遵循 schema：",
+        "- mime: 音频 MIME 类型，优先使用 audio/wav（24kHz, mono, 16-bit PCM），也可用 audio/mpeg",
+        "- base64: 音频二进制数据的 base64（不要加 data: 前缀，不要换行）",
+        "要求：",
+        "- 语音为中文普通话，语气自然，适合电台 DJ 口播。",
+        "- 禁止输出任何额外说明文字。",
+        "",
+        "【输入文本】",
+        s
+    ])
+
+def sniff_audio_mime(b):
+    if not b or len(b) < 16:
+        return ""
+    if b[:4] == b"RIFF" and b[8:12] == b"WAVE":
+        return "audio/wav"
+    if b[:3] == b"ID3" or b[:2] == b"\xff\xfb":
+        return "audio/mpeg"
+    if b[:4] == b"OggS":
+        return "audio/ogg"
+    return ""
+
+def decode_audio_base64(b64):
+    s = str(b64 or "").strip()
+    if not s:
+        return None
+    s = re.sub(r"\s+", "", s)
+    try:
+        return base64.b64decode(s, validate=True)
+    except Exception:
+        try:
+            return base64.b64decode(s, validate=False)
+        except Exception:
+            return None
+
+def run_claude_with_optional_model(prompt, schema, model):
+    claude_path = find_claude_binary()
+    if not claude_path:
+        return {
+            "ok": False,
+            "error": "Claude CLI not found: please install Claude Code so that `claude` is available in PATH, or set CLAUDE_PATH/CLAUDE_BIN to the full executable path.",
+        }
+    args = [
+        claude_path,
+        "--bare",
+    ]
+    model_flag = get_claude_model_flag()
+    model_str = str(model or "").strip()
+    if model_flag and model_str:
+        args.extend([model_flag, model_str])
+    args.extend([
+        "-p", prompt,
+        "--output-format", "json",
+        "--json-schema", json.dumps(schema)
+    ])
+    timeout_seconds = get_claude_timeout_seconds()
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=build_exec_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "error": f"claude timed out after {timeout_seconds}s. Try running `claude --bare -p \"你好\"` in Terminal, or increase CLAUDE_TIMEOUT_SECONDS.",
+        }
+    if result.returncode != 0:
+        return {"ok": False, "error": result.stderr or f"claude exited {result.returncode}"}
+    try:
+        payload = json.loads(result.stdout)
+    except Exception:
+        return {"ok": False, "error": f"invalid json from claude: {str(result.stdout or '')[:500]}"}
+    if isinstance(payload, dict) and (payload.get("is_error") is True or payload.get("subtype") in ("error", "failed")):
+        message = payload.get("result") or payload.get("error") or payload.get("message") or "claude error"
+        return {"ok": False, "error": str(message)}
+    structured = extract_structured_from_claude_payload(payload)
+    if structured:
+        return {"ok": True, "result": structured}
+    if isinstance(payload, dict) and isinstance(payload.get("structured_output"), dict):
+        return {"ok": True, "result": payload.get("structured_output")}
+    return {"ok": False, "error": "claude output missing structured_output"}
 
 def sanitize_markdown_output(text, required_heading):
     raw = str(text or "").strip()
@@ -645,13 +853,23 @@ def build_prompt(input_data):
     profile = input_data.get("profileSummary", "")
     scene = input_data.get("scene", "")
     force = input_data.get("forceProfileRefresh", False)
+    force_recommend = bool(input_data.get("forceRecommend", False))
+    try:
+        list_md = read_list_file(max_chars=6000).get("content", "")
+    except Exception:
+        list_md = ""
+    try:
+        mem_md = read_music_memory_file()
+    except Exception:
+        mem_md = ""
 
     instructions = [
         f"你是 Claudiofm 的 DJ {dj}。回复必须是中文。",
-        "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应，并推荐 5-10 首适合当前场景的歌曲。",
+        "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
         f"当前音源来源偏好：{provider}。",
         "必须输出 JSON，字段遵循给定 schema。",
-        "play 数组长度必须在 5 到 10 之间。",
+        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
+        "当 forceRecommend=false 时：只有在用户明确在聊音乐/想听歌/要推荐/要歌单时才推荐 5-10 首歌；否则 play 输出空数组，segue 输出空字符串。",
         "每首歌只输出 name/artist；album/query/provider 可选。",
         "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
     ]
@@ -660,6 +878,15 @@ def build_prompt(input_data):
 
     return "\n".join([
         "\n".join(instructions),
+        "",
+        "【forceRecommend】",
+        "true" if force_recommend else "false",
+        "",
+        "【历史播放歌单（list.md 摘要）】",
+        str(list_md or "").strip() or "(空)",
+        "",
+        "【历史记忆文件（music.md 摘要）】",
+        str(mem_md or "").strip() or "(空)",
         "",
         "【画像摘要】",
         profile or "(空)",
@@ -983,6 +1210,52 @@ def main():
         if not msg:
             break
         mtype = msg.get("type")
+        if mtype == "tts":
+            try:
+                text = str(msg.get("text", "") or "").strip()
+                if not text:
+                    send_message({"ok": False, "error": "empty text"})
+                    continue
+                schema = build_tts_schema()
+                prompt = build_tts_prompt(text)
+                models = pick_tts_models()
+                tried = []
+                last_error = ""
+                if models:
+                    for m in models[:4]:
+                        tried.append(m)
+                        resp = run_claude_with_optional_model(prompt, schema, m)
+                        if not resp.get("ok"):
+                            last_error = str(resp.get("error") or "")
+                            continue
+                        result = resp.get("result", {}) if isinstance(resp.get("result"), dict) else {}
+                        mime = str(result.get("mime", "") or "").strip()
+                        b64 = str(result.get("base64", "") or "").strip()
+                        data = decode_audio_base64(b64)
+                        guessed = sniff_audio_mime(data)
+                        if data is None or not guessed:
+                            last_error = "invalid audio base64"
+                            continue
+                        if len(data) > 4 * 1024 * 1024:
+                            last_error = "audio too large"
+                            continue
+                        send_message({"ok": True, "audio": {"mime": guessed or mime or "audio/wav", "base64": b64}, "model": m})
+                        break
+                    else:
+                        send_message({
+                            "ok": False,
+                            "error": last_error or "tts synthesis failed",
+                            "modelsTried": tried,
+                        })
+                else:
+                    send_message({
+                        "ok": False,
+                        "error": "no tts model configured",
+                        "models": list_configured_models(),
+                    })
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
         if mtype == "lyricInterlude":
             try:
                 tracks = msg.get("tracks", [])
@@ -1067,6 +1340,7 @@ def main():
                     "scene": scene,
                     "text": "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 5-10 首适合现在的歌。",
                     "forceProfileRefresh": False,
+                    "forceRecommend": True,
                 }
                 prompt = build_prompt(payload)
                 resp = run_claude(prompt, schema)

@@ -289,6 +289,12 @@ async function resolveTrackWithFallback(track) {
   return null;
 }
 
+function isMusicIntent(text) {
+  const s = String(text || "").toLowerCase();
+  const keywords = ["音乐", "推荐", "歌单", "歌曲", "听歌", "播放", "电台", "来点", "想听", "music", "song", "playlist"];
+  return keywords.some((k) => s.includes(k));
+}
+
 async function onChat(text) {
   const { turnCount } = await chrome.storage.local.get("turnCount");
   const nextTurnCount = Number(turnCount ?? 0) + 1;
@@ -305,6 +311,7 @@ async function onChat(text) {
     profileSummary: profileSummary ?? "",
     turnCountSinceLastProfileRefresh: nextTurnCount % 3,
     forceProfileRefresh: nextTurnCount % 3 === 0,
+    forceRecommend: isMusicIntent(text),
   };
 
   const resp = await sendNative(payload);
@@ -610,6 +617,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           profileSummary: profileSummary ?? "",
           tracks,
         });
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "tts") {
+        const text = msg.text ? String(msg.text) : "";
+        const voiceId = msg.voiceId ? String(msg.voiceId) : "";
+        const res = await sendNative({ type: "tts", text, voiceId });
         sendResponse(res);
         return;
       }

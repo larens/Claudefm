@@ -482,6 +482,21 @@ button:hover {
   border: 1px solid var(--borderSoft);
 }
 
+.startPlayBtn {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--borderSoft);
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.startPlayBtn:hover {
+  background: var(--surfaceHover);
+}
+
 .queue {
   max-height: 40vh;
   overflow: auto;
