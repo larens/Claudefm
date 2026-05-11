@@ -46,11 +46,11 @@ Claudiofm 的 Chrome 侧栏插件版本（MV3 Side Panel）：把“DJ 对话 + 
       https://music.pjmp3.com/*                    ~/Documents/Claudiofm/
 ```
 
-## 快速开始（macOS）
+## 快速开始（macOS / Linux / Windows）
 
 ### 前置条件
 
-- Chrome/Arc（支持 Side Panel 的 Chromium 内核浏览器）
+- Chrome/Edge/Brave/Arc（支持 Side Panel 的 Chromium 内核浏览器）
 - Node.js ≥ 18（用于安装 Host；运行时可选）
 - Python 3（可选；存在则优先使用 `host.py`）
 - Claude Code CLI 可用（命令 `claude` 在 PATH 中；或通过环境变量 `CLAUDE_BIN` 指定）
@@ -72,11 +72,17 @@ Claudiofm 的 Chrome 侧栏插件版本（MV3 Side Panel）：把“DJ 对话 + 
 }
 ```
 
-安装（会写入浏览器的 `NativeMessagingHosts` 目录；默认 Host 入口为 `host/claudiofm-host.sh`）：
+安装（跨平台安装脚本：macOS/Linux 写入 `NativeMessagingHosts`；Windows 写入注册表；默认 Host 入口为 `host/claudiofm-host.sh` 或 `host/claudiofm-host.cmd`）：
 
 ```bash
 cd host
-node install-macos.mjs
+node install.mjs
+```
+
+可选：不改 JSON，直接命令行传参：
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
 ```
 
 ### 3) 打开侧栏
@@ -87,7 +93,7 @@ node install-macos.mjs
 
 - Host 未授权/forbidden：
   - 确认 `host/install-macos.json` 的 `extensionId` 与 `chrome://extensions` 一致
-  - 重新执行 `node host/install-macos.mjs`
+  - 重新执行 `node host/install.mjs`
   - 完全退出并重启浏览器
 - 找不到 `claude`：
   - 确认 Claude Code CLI 已安装且命令可用

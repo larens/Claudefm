@@ -394,8 +394,8 @@ async function onChat(text, options = {}) {
     const extensionId = chrome.runtime.id;
     const hint =
       resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed")
-        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-macos.json 里的 extensionId，并运行：node host/install-macos.mjs（执行后需要完全退出并重启浏览器）`
-        : `Claude Code 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install-macos.mjs`;
+        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-macos.json 里的 extensionId，并运行：node host/install.mjs（执行后需要完全退出并重启浏览器）`
+        : `Claude Code 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
     broadcast({
       type: "chatResult",
       result: { say: resp?.error || "Claude Code 不可用或 Host 未安装。", play: [] },
@@ -571,7 +571,7 @@ async function maybeWelcome(port) {
       broadcast({
         type: "chatResult",
         result: {
-          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-macos.json 的 extensionId 后执行：node host/install-macos.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
+          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-macos.json 的 extensionId 后执行：node host/install.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
           play: [],
         },
       });

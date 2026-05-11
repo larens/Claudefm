@@ -46,7 +46,7 @@ Claudiofm is a Chrome Side Panel (MV3) extension that turns chat + playlist reco
       https://music.pjmp3.com/*                    ~/Documents/Claudiofm/
 ```
 
-## Quick start (macOS)
+## Quick start (macOS / Linux / Windows)
 
 ### Prerequisites
 
@@ -72,11 +72,17 @@ Edit `host/install-macos.json`:
 }
 ```
 
-Install (writes the NativeMessagingHosts manifest; default entry is `host/claudiofm-host.sh`):
+Install (cross-platform installer: macOS/Linux write NativeMessagingHosts; Windows writes registry keys; default entry is `host/claudiofm-host.sh` or `host/claudiofm-host.cmd`):
 
 ```bash
 cd host
-node install-macos.mjs
+node install.mjs
+```
+
+Optional: use CLI args instead of editing JSON:
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
 ```
 
 ### 3) Open the side panel
@@ -87,7 +93,7 @@ Click the extension icon and open Side Panel → Claudiofm.
 
 - Host not allowed / forbidden:
   - Ensure `host/install-macos.json` has the correct `extensionId`
-  - Re-run `node host/install-macos.mjs`
+  - Re-run `node host/install.mjs`
   - Fully quit and restart the browser
 - `claude` not found:
   - Install Claude Code CLI and make sure `claude` is in PATH
