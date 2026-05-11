@@ -26,11 +26,6 @@ const elAvatarImg = document.getElementById("avatarImg");
 const elAvatarFallback = document.getElementById("avatarFallback");
 const elDjDisplay = document.getElementById("djDisplay");
 const elDjNameText = document.getElementById("djNameText");
-const elDjEditIcon = document.getElementById("djEditIcon");
-const elDjEdit = document.getElementById("djEdit");
-const elDjNameInput = document.getElementById("djNameInput");
-const elDjNameSave = document.getElementById("djNameSave");
-const elDjNameCancel = document.getElementById("djNameCancel");
 const elProviderName = document.getElementById("providerName");
 const elBtnQueue = document.getElementById("btnQueue");
 const elQueue = document.getElementById("queue");
@@ -61,6 +56,8 @@ const elSettingsPanel = document.getElementById("settingsPanel");
 const elSettingsClose = document.getElementById("btnSettingsClose");
 const elSettingsStatus = document.getElementById("settingsStatus");
 const elSettingsHint = document.getElementById("settingsHint");
+const elSettingsDjNameInput = document.getElementById("settingsDjNameInput");
+const elSettingsDjNameSave = document.getElementById("settingsDjNameSave");
 const elTtsVoiceSelect = document.getElementById("ttsVoiceSelect");
 
 const elTrackTitle = document.getElementById("trackTitle");
@@ -108,9 +105,7 @@ let historySelectedIndex = -1;
 let historyView = "list";
 let historyPath = "";
 
-elDjDisplay.hidden = false;
-elDjEdit.hidden = true;
-elDjEdit.style.display = "none";
+if (elDjDisplay) elDjDisplay.hidden = false;
 
 function getAudioDebugInfo(audio) {
   return {
@@ -489,6 +484,11 @@ function setSettingsStatus(text) {
   elSettingsStatus.textContent = text ? String(text) : "";
 }
 
+function refreshSettingsDjNameUI() {
+  if (!elSettingsDjNameInput) return;
+  elSettingsDjNameInput.value = djName;
+}
+
 function openSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = false;
@@ -503,6 +503,7 @@ function closeSoulPanel() {
 function openSettingsPanel() {
   if (!elSettingsPanel) return;
   elSettingsPanel.hidden = false;
+  refreshSettingsDjNameUI();
   void refreshTtsSettingsUI();
 }
 
@@ -1000,23 +1001,6 @@ function updateSendState() {
   elSend.setAttribute("aria-label", "发送");
 }
 
-function enterDjEdit() {
-  elDjDisplay.hidden = true;
-  elDjDisplay.style.display = "none";
-  elDjEdit.hidden = false;
-  elDjEdit.style.display = "";
-  elDjNameInput.value = djName;
-  elDjNameInput.focus();
-  elDjNameInput.select();
-}
-
-function exitDjEdit() {
-  elDjEdit.hidden = true;
-  elDjEdit.style.display = "none";
-  elDjDisplay.hidden = false;
-  elDjDisplay.style.display = "";
-}
-
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1441,39 +1425,6 @@ elAvatarFile.addEventListener("change", async () => {
   }
 });
 
-elDjEditIcon.addEventListener("click", () => enterDjEdit());
-
-elDjNameCancel.addEventListener("click", () => {
-  elDjNameInput.value = djName;
-  exitDjEdit();
-});
-
-elDjNameSave.addEventListener("click", async () => {
-  const raw = (elDjNameInput.value || "").trim();
-  const next = Array.from(raw).slice(0, 8).join("");
-  if (!next) {
-    setHint("DJ 名称不能为空");
-    return;
-  }
-  await patchPreferences({ djName: next });
-  setDjNameUI(next);
-  exitDjEdit();
-  setHint("已保存");
-});
-
-elDjNameInput.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    exitDjEdit();
-  }
-});
-
-elDjNameInput.addEventListener("input", () => {
-  const raw = elDjNameInput.value || "";
-  const next = Array.from(raw).slice(0, 8).join("");
-  if (next !== raw) elDjNameInput.value = next;
-});
-
 
 
 elBtnQueue.addEventListener("click", () => {
@@ -1830,6 +1781,51 @@ if (elTtsVoiceSelect) {
       setHint(`保存失败：${message}`);
     }
     await refreshTtsSettingsUI();
+  });
+}
+
+async function saveDjNameFromSettings() {
+  if (!elSettingsDjNameInput) return;
+  const raw = String(elSettingsDjNameInput.value || "").trim();
+  const next = Array.from(raw).slice(0, 8).join("");
+  if (!next) {
+    setHint("DJ 名称不能为空");
+    refreshSettingsDjNameUI();
+    return;
+  }
+  try {
+    await patchPreferences({ djName: next });
+    setDjNameUI(next);
+    setHint("已保存 DJ 名称");
+    refreshSettingsDjNameUI();
+  } catch (e) {
+    const message = e?.message ? String(e.message) : String(e);
+    setHint(`保存失败：${message}`);
+  }
+}
+
+if (elSettingsDjNameSave) {
+  elSettingsDjNameSave.addEventListener("click", async () => {
+    await saveDjNameFromSettings();
+  });
+}
+
+if (elSettingsDjNameInput) {
+  elSettingsDjNameInput.addEventListener("input", () => {
+    const raw = elSettingsDjNameInput.value || "";
+    const next = Array.from(raw).slice(0, 8).join("");
+    if (next !== raw) elSettingsDjNameInput.value = next;
+  });
+  elSettingsDjNameInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await saveDjNameFromSettings();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      refreshSettingsDjNameUI();
+    }
   });
 }
 

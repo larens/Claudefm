@@ -19,12 +19,6 @@
             <div class="titleRow">
               <div class="djDisplay" id="djDisplay">
                 <span class="djName" id="djNameText">Claudio</span>
-                <button class="djEditIcon" id="djEditIcon" aria-label="编辑 DJ 名称">✎</button>
-              </div>
-              <div class="djEdit" id="djEdit" hidden>
-                <input class="djInput" id="djNameInput" maxlength="8" />
-                <button class="djEditBtn" id="djNameSave">保存</button>
-                <button class="djEditBtn" id="djNameCancel">取消</button>
               </div>
             </div>
 
@@ -138,6 +132,13 @@
           </div>
           <div class="memoryStatus" id="settingsStatus"></div>
           <div class="settingsBody">
+            <div class="settingsRow">
+              <div class="settingsLabel">DJ 名称</div>
+              <div class="settingsInline">
+                <input class="settingsInput" id="settingsDjNameInput" maxlength="8" />
+                <button class="settingsBtn" id="settingsDjNameSave">保存</button>
+              </div>
+            </div>
             <div class="settingsRow">
               <div class="settingsLabel">口播音色</div>
               <select class="settingsSelect" id="ttsVoiceSelect"></select>
