@@ -551,6 +551,56 @@ button:hover {
   border: 1px solid var(--borderSoft);
 }
 
+.recommendCard {
+  align-self: flex-start;
+  width: 100%;
+  border: 1px solid var(--borderSoft);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.recommendTitle {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.recommendTextarea {
+  width: 100%;
+  border: 1px solid var(--borderSoft);
+  background: color-mix(in srgb, CanvasText 3%, Canvas 97%);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.recommendActions {
+  display: flex;
+  gap: 8px;
+}
+
+.recommendBtn {
+  flex: 0 0 auto;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.recommendBtn.primary {
+  background: rgba(122, 92, 255, 0.18);
+  border-color: rgba(122, 92, 255, 0.35);
+}
+
+.msg.assistant.pending {
+  opacity: 0.75;
+}
+
 .startPlayBtn {
   width: 100%;
   border-radius: 12px;

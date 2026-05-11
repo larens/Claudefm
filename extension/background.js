@@ -351,13 +351,7 @@ async function warmCacheTracks(tracks) {
   }
 }
 
-function isMusicIntent(text) {
-  const s = String(text || "").toLowerCase();
-  const keywords = ["音乐", "推荐", "歌单", "歌曲", "听歌", "播放", "电台", "来点", "想听", "music", "song", "playlist"];
-  return keywords.some((k) => s.includes(k));
-}
-
-async function onChat(text) {
+async function onChat(text, options = {}) {
   const { turnCount } = await chrome.storage.local.get("turnCount");
   const nextTurnCount = Number(turnCount ?? 0) + 1;
   await chrome.storage.local.set({ turnCount: nextTurnCount });
@@ -390,7 +384,7 @@ async function onChat(text) {
     profileSummary: profileSummary ?? "",
     turnCountSinceLastProfileRefresh: nextTurnCount % 3,
     forceProfileRefresh: nextTurnCount % 3 === 0,
-    forceRecommend: isMusicIntent(text),
+    forceRecommend: Boolean(options?.forceRecommend),
     likedTracks: likedTracks.slice(0, 20),
     dislikedTracks: dislikedTracks.slice(0, 20),
   };
@@ -704,8 +698,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
       if (msg.type === "chat") {
-        await onChat(msg.text);
         sendResponse({ ok: true });
+        void onChat(msg.text, { forceRecommend: Boolean(msg.forceRecommend) }).catch((error) => {
+          const message = error?.message ? String(error.message) : String(error);
+          broadcast({
+            type: "chatResult",
+            result: { say: `发生错误：${message}`, play: [] },
+          });
+        });
         return;
       }
       if (msg.type === "resolveTrack") {

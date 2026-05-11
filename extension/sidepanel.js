@@ -394,6 +394,127 @@ function appendMessageDom(role, text) {
   div.textContent = text;
   elChat.appendChild(div);
   elChat.scrollTop = elChat.scrollHeight;
+  return div;
+}
+
+function appendChatNode(node) {
+  elChat.appendChild(node);
+  elChat.scrollTop = elChat.scrollHeight;
+}
+
+function clearRecommendCard() {
+  if (recommendCardEl && recommendCardEl.isConnected) recommendCardEl.remove();
+  recommendCardEl = null;
+}
+
+function showRecommendConfirm(question) {
+  clearRecommendCard();
+  const wrap = document.createElement("div");
+  wrap.className = "recommendCard";
+
+  const title = document.createElement("div");
+  title.className = "recommendTitle";
+  title.textContent = question ? String(question) : "要不要我给你推荐一份歌单并直接开始播放？";
+
+  const actions = document.createElement("div");
+  actions.className = "recommendActions";
+
+  const yes = document.createElement("button");
+  yes.className = "recommendBtn primary";
+  yes.type = "button";
+  yes.textContent = "推荐歌单";
+  yes.addEventListener("click", () => {
+    const seed = lastChatText ? String(lastChatText) : "";
+    if (!seed) return;
+    clearRecommendCard();
+    appendMessage("user", "推荐一份歌单");
+    try {
+      void chrome.runtime.sendMessage({ type: "chat", text: seed, forceRecommend: true });
+    } catch {}
+  });
+
+  const no = document.createElement("button");
+  no.className = "recommendBtn";
+  no.type = "button";
+  no.textContent = "先不用";
+  no.addEventListener("click", () => {
+    clearRecommendCard();
+    appendMessage("assistant", "好，那我先陪你聊。你想从哪开始？");
+  });
+
+  actions.appendChild(yes);
+  actions.appendChild(no);
+  wrap.appendChild(title);
+  wrap.appendChild(actions);
+  recommendCardEl = wrap;
+  appendChatNode(wrap);
+}
+
+function showRecommendPush(tracks, defaultSegue) {
+  clearRecommendCard();
+  const list = Array.isArray(tracks) ? tracks : [];
+  if (!list.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "recommendCard";
+
+  const title = document.createElement("div");
+  title.className = "recommendTitle";
+  title.textContent = "DJ 推荐语（可编辑），确认后推送并播放新歌单";
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "recommendTextarea";
+  textarea.rows = 3;
+  textarea.value = defaultSegue ? String(defaultSegue) : "";
+
+  const actions = document.createElement("div");
+  actions.className = "recommendActions";
+
+  const push = document.createElement("button");
+  push.className = "recommendBtn primary";
+  push.type = "button";
+  push.textContent = "推送并播放";
+  push.addEventListener("click", async () => {
+    const segueText = String(textarea.value || "").trim();
+    clearRecommendCard();
+
+    try {
+      clearPreload("new-playlist");
+    } catch {}
+    segueSpokenInQueue = 0;
+    resetLyricSegment();
+
+    const next = [];
+    if (segueText) next.push(buildSegueItem(segueText));
+    next.push(
+      ...list.map((t) => ({
+        ...t,
+        streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
+        provider: t?.provider || "pending",
+      }))
+    );
+    queue = next;
+    queueIndex = -1;
+    renderQueue();
+    setHint(`已推送 ${list.length} 首新歌单，正在播放`);
+    try {
+      await playAt(0);
+    } catch {}
+  });
+
+  const cancel = document.createElement("button");
+  cancel.className = "recommendBtn";
+  cancel.type = "button";
+  cancel.textContent = "取消";
+  cancel.addEventListener("click", () => clearRecommendCard());
+
+  actions.appendChild(push);
+  actions.appendChild(cancel);
+  wrap.appendChild(title);
+  wrap.appendChild(textarea);
+  wrap.appendChild(actions);
+  recommendCardEl = wrap;
+  appendChatNode(wrap);
 }
 
 function sanitizeQueueForStorage(list) {
@@ -1685,42 +1806,39 @@ async function handleAssistantResult(result) {
   if (result.reason) parts.push(result.reason);
   if (parts.length) appendMessage("assistant", parts.join("\n\n"));
 
-  const hasTracks = Array.isArray(result.play) && result.play.length > 0;
-  const shouldPrefixSegue = hasTracks && queueIndex === -1 && queue.length === 0 && result.segue;
-  if (!shouldPrefixSegue && result.segue && shouldSpeakSegue()) {
-    segueSpokenInQueue += 1;
-    speak(result.segue);
+  if (result.confirmRecommend) {
+    const q = result.confirmQuestion ? String(result.confirmQuestion).trim() : "";
+    showRecommendConfirm(q);
+    return;
   }
 
+  const hasTracks = Array.isArray(result.play) && result.play.length > 0;
   if (hasTracks) {
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
-    setHint(`已推荐 ${result.play.length} 首歌曲，可点歌单查看/播放`);
-    if (queue.length === 0 || queueIndex >= queue.length - 1) {
+    const isFreshSession = queueIndex === -1 && queue.length === 0;
+    if (isFreshSession) {
+      setHint(`已推荐 ${result.play.length} 首歌曲，正在开始播放`);
       segueSpokenInQueue = 0;
       resetLyricSegment();
-    }
-    const nextItems = [];
-    if (shouldPrefixSegue) {
-      const item = buildSegueItem(result.segue);
-      if (item.text) {
-        nextItems.push(item);
+      const nextItems = [];
+      const segueText = result.segue ? String(result.segue).trim() : "";
+      if (segueText) {
+        nextItems.push(buildSegueItem(segueText));
         segueSpokenInQueue += 1;
       }
-    }
-    nextItems.push(
-      ...result.play.map((t) => ({
-        ...t,
-        streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
-        provider: t?.provider || "pending",
-      }))
-    );
-    queue = queue.concat(nextItems);
-    renderQueue();
-    if (queueIndex === -1) {
+      nextItems.push(
+        ...result.play.map((t) => ({
+          ...t,
+          streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
+          provider: t?.provider || "pending",
+        }))
+      );
+      queue = queue.concat(nextItems);
+      renderQueue();
       await playAt(0);
     } else {
-      schedulePreloadForNextTrack();
+      showRecommendPush(result.play, result.segue);
     }
   }
 }
@@ -1805,6 +1923,8 @@ elSend.addEventListener("click", async () => {
   elInput.value = "";
   updateSendState();
   appendMessage("user", text);
+  lastChatText = text;
+  clearRecommendCard();
   try {
     await chrome.runtime.sendMessage({ type: "chat", text });
   } catch (e) {
