@@ -270,6 +270,197 @@ def build_welcome_scene(latitude, longitude, profile_summary):
 
     return "\n".join(scene_lines).strip()
 
+def get_claudiofm_folder():
+    home = os.path.expanduser("~")
+    return os.path.join(home, "Documents", "Claudiofm")
+
+def ensure_list_file():
+    folder = get_claudiofm_folder()
+    file_path = os.path.join(folder, "list.md")
+    if os.path.isfile(file_path):
+        return {"ok": True, "path": file_path, "created": False}
+    os.makedirs(folder, exist_ok=True)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("# 历史播放歌单\n\n")
+    return {"ok": True, "path": file_path, "created": True}
+
+def read_list_file(max_chars=20000):
+    ensured = ensure_list_file()
+    if not ensured.get("ok"):
+        return ensured
+    file_path = ensured.get("path")
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    content = str(content or "")
+    if max_chars and len(content) > max_chars:
+        content = content[:max_chars]
+    return {"ok": True, "path": file_path, "content": content, "created": ensured.get("created", False)}
+
+def normalize_track_key(name, artist):
+    n = str(name or "").strip().lower()
+    a = str(artist or "").strip().lower()
+    n = re.sub(r"[\s\-_–—·•、，,。.!！?？'\"“”‘’()（）【】\[\]{}<>《》:：;；/\\\\|]+", "", n)
+    a = re.sub(r"[\s\-_–—·•、，,。.!！?？'\"“”‘’()（）【】\[\]{}<>《》:：;；/\\\\|]+", "", a)
+    return f"{n}|{a}"
+
+def parse_tracks_loose(text, max_tracks=5000):
+    tracks = []
+    if not text:
+        return tracks
+    for raw_line in str(text).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            continue
+        patterns = [
+            r"^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$",
+            r"^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$",
+            r'^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$',
+            r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|",
+            r"^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$",
+        ]
+        hit = None
+        for pattern in patterns:
+            m = re.match(pattern, line)
+            if not m:
+                continue
+            name = str(m.group(1) or "").strip()
+            artist = str(m.group(2) or "").strip()
+            if not name or not artist:
+                continue
+            if name in ("歌曲", "歌手", "name", "artist", "title"):
+                continue
+            hit = {"name": name, "artist": artist}
+            break
+        if hit:
+            tracks.append(hit)
+            if len(tracks) >= max_tracks:
+                break
+        else:
+            parts = [p.strip() for p in re.split(r"[,|\t]+", line) if p and str(p).strip()]
+            if len(parts) >= 2 and parts[0] not in ("歌曲", "歌手", "name", "artist", "title"):
+                tracks.append({"name": parts[0], "artist": parts[1]})
+                if len(tracks) >= max_tracks:
+                    break
+    return tracks
+
+def import_list_tracks(tracks):
+    ensured = ensure_list_file()
+    if not ensured.get("ok"):
+        return ensured
+    file_path = ensured.get("path")
+
+    existing = ""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except Exception:
+        existing = ""
+
+    existing_tracks = parse_tracks_loose(existing, max_tracks=8000)
+    seen = set()
+    for t in existing_tracks:
+        seen.add(normalize_track_key(t.get("name"), t.get("artist")))
+
+    added = 0
+    skipped = 0
+    to_add = []
+    if isinstance(tracks, list):
+        for t in tracks:
+            if not isinstance(t, dict):
+                skipped += 1
+                continue
+            name = str(t.get("name", "") or "").strip()
+            artist = str(t.get("artist", "") or "").strip()
+            if not name or not artist:
+                skipped += 1
+                continue
+            key = normalize_track_key(name, artist)
+            if not key or key in seen:
+                skipped += 1
+                continue
+            seen.add(key)
+            to_add.append({"name": name, "artist": artist})
+
+    if to_add:
+        with open(file_path, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            for t in to_add:
+                f.write(f"- {t['name']} - {t['artist']}\n")
+                added += 1
+
+    total = len(existing_tracks) + added
+    return {"ok": True, "path": file_path, "added": added, "skipped": skipped, "total": total}
+
+def build_list_section(tracks, stamp, kind, seen_global=None):
+    seen = set()
+    global_seen = seen_global if isinstance(seen_global, set) else set()
+    rows = []
+    for t in tracks or []:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("name", "") or "").strip()
+        artist = str(t.get("artist", "") or "").strip()
+        if not name or not artist:
+            continue
+        key = normalize_track_key(name, artist)
+        if not key or key in seen or key in global_seen:
+            continue
+        seen.add(key)
+        global_seen.add(key)
+        rows.append(f"- {name} - {artist}")
+    if not rows:
+        return ""
+    k = str(kind or "").strip().lower()
+    meta = f"> kind: {k}" if k else ""
+    parts = [f"## {stamp}"]
+    if meta:
+        parts += [meta]
+    parts += [""] + rows + ["", ""]
+    return "\n".join(parts)
+
+def prepend_list_section(kind, tracks):
+    ensured = ensure_list_file()
+    if not ensured.get("ok"):
+        return ensured
+    file_path = ensured.get("path")
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    existing = ""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except Exception:
+        existing = ""
+
+    existing_tracks = parse_tracks_loose(existing, max_tracks=50000)
+    global_seen = set()
+    for t in existing_tracks:
+        global_seen.add(normalize_track_key(t.get("name"), t.get("artist")))
+
+    section = build_list_section(tracks, stamp, kind, seen_global=global_seen)
+    if not section:
+        return {"ok": True, "path": file_path, "skipped": True}
+
+    header_end = 0
+    if existing.startswith("#"):
+        lines = existing.splitlines(True)
+        if lines:
+            header_end = len(lines[0])
+            while header_end < len(existing) and existing[header_end:header_end + 1] in ("\n", "\r"):
+                header_end += 1
+
+    next_content = existing[:header_end] + section + existing[header_end:]
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(next_content)
+    except Exception as e:
+        return {"ok": False, "error": f"write failed: {str(e)}"}
+
+    return {"ok": True, "path": file_path, "inserted": True, "stamp": stamp, "kind": str(kind or "")}
+
 def read_message():
     header = sys.stdin.buffer.read(4)
     if len(header) < 4:
@@ -744,6 +935,27 @@ def main():
         if mtype == "readMemoryFile":
             try:
                 resp = read_memory_file()
+                send_message(resp)
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
+        if mtype == "readListFile":
+            try:
+                resp = read_list_file()
+                send_message(resp)
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
+        if mtype == "importListTracks":
+            try:
+                resp = import_list_tracks(msg.get("tracks", []))
+                send_message(resp)
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
+        if mtype == "prependListSection":
+            try:
+                resp = prepend_list_section(msg.get("kind", "chat"), msg.get("tracks", []))
                 send_message(resp)
             except Exception as e:
                 send_message({"ok": False, "error": str(e)})

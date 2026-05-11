@@ -441,6 +441,201 @@ function readMemoryFile() {
   return { ok: true, path: filePath, content: sliced };
 }
 
+function ensureListFile() {
+  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
+  const filePath = path.join(folder, "list.md");
+  if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
+  fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(filePath, "# 历史播放歌单\n\n", "utf8");
+  return { ok: true, path: filePath, created: true };
+}
+
+function readListFile() {
+  const ensured = ensureListFile();
+  if (!ensured.ok) return ensured;
+  const filePath = ensured.path;
+  const content = String(fs.readFileSync(filePath, "utf8") || "");
+  const maxChars = 20000;
+  const sliced = content.length > maxChars ? content.slice(0, maxChars) : content;
+  return { ok: true, path: filePath, content: sliced, created: Boolean(ensured.created) };
+}
+
+function normalizeTrackKey(name, artist) {
+  const n = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+  const a = String(artist || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+  return `${n}|${a}`;
+}
+
+function parseTracksLoose(text, maxTracks = 8000) {
+  const tracks = [];
+  const raw = String(text || "");
+  if (!raw.trim()) return tracks;
+  const lines = raw.split(/\r?\n/g);
+  const patterns = [
+    /^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+    /^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+    /^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$/u,
+    /^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/u,
+    /^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$/u
+  ];
+  for (const rawLine of lines) {
+    const line = String(rawLine || "").trim();
+    if (!line) continue;
+    if (line.startsWith("#")) continue;
+    let hit = null;
+    for (const re of patterns) {
+      const m = line.match(re);
+      if (!m) continue;
+      const name = String(m[1] || "").trim();
+      const artist = String(m[2] || "").trim();
+      if (!name || !artist) continue;
+      if (["歌曲", "歌手", "name", "artist", "title"].includes(name)) continue;
+      hit = { name, artist };
+      break;
+    }
+    if (!hit) {
+      const parts = line
+        .split(/[,\t|]+/g)
+        .map((p) => String(p || "").trim())
+        .filter(Boolean);
+      if (parts.length >= 2 && !["歌曲", "歌手", "name", "artist", "title"].includes(parts[0])) {
+        hit = { name: parts[0], artist: parts[1] };
+      }
+    }
+    if (hit) tracks.push(hit);
+    if (tracks.length >= maxTracks) break;
+  }
+  return tracks;
+}
+
+function importListTracks(input) {
+  const ensured = ensureListFile();
+  if (!ensured.ok) return ensured;
+  const filePath = ensured.path;
+  let existing = "";
+  try {
+    existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  } catch {
+    existing = "";
+  }
+
+  const existingTracks = parseTracksLoose(existing, 8000);
+  const seen = new Set(existingTracks.map((t) => normalizeTrackKey(t.name, t.artist)));
+  const incoming = Array.isArray(input && input.tracks ? input.tracks : null) ? input.tracks : [];
+
+  const toAdd = [];
+  let skipped = 0;
+  for (const t of incoming) {
+    if (!t || typeof t !== "object") {
+      skipped += 1;
+      continue;
+    }
+    const name = String(t.name || "").trim();
+    const artist = String(t.artist || "").trim();
+    if (!name || !artist) {
+      skipped += 1;
+      continue;
+    }
+    const key = normalizeTrackKey(name, artist);
+    if (!key || seen.has(key)) {
+      skipped += 1;
+      continue;
+    }
+    seen.add(key);
+    toAdd.push({ name, artist });
+  }
+
+  let added = 0;
+  if (toAdd.length) {
+    const parts = [];
+    if (existing && !existing.endsWith("\n")) parts.push("\n");
+    toAdd.forEach((t) => {
+      parts.push(`- ${t.name} - ${t.artist}\n`);
+      added += 1;
+    });
+    fs.appendFileSync(filePath, parts.join(""), "utf8");
+  }
+
+  return { ok: true, path: filePath, added, skipped, total: existingTracks.length + added };
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function formatTimestamp(date = new Date()) {
+  const d = date instanceof Date ? date : new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function buildListSection(tracks, stamp, kind, globalSeen) {
+  const rows = [];
+  const seen = new Set();
+  const global = globalSeen instanceof Set ? globalSeen : new Set();
+  const incoming = Array.isArray(tracks) ? tracks : [];
+  for (const t of incoming) {
+    if (!t || typeof t !== "object") continue;
+    const name = String(t.name || "").trim();
+    const artist = String(t.artist || "").trim();
+    if (!name || !artist) continue;
+    const key = normalizeTrackKey(name, artist);
+    if (!key || seen.has(key) || global.has(key)) continue;
+    seen.add(key);
+    global.add(key);
+    rows.push(`- ${name} - ${artist}`);
+  }
+  if (!rows.length) return "";
+  const k = String(kind || "").trim().toLowerCase();
+  const parts = [`## ${stamp}`];
+  if (k) parts.push(`> kind: ${k}`);
+  parts.push("", ...rows, "", "");
+  return parts.join("\n");
+}
+
+function prependListSection(input) {
+  const ensured = ensureListFile();
+  if (!ensured.ok) return ensured;
+  const filePath = ensured.path;
+  const stamp = formatTimestamp(new Date());
+
+  let existing = "";
+  try {
+    existing = fs.existsSync(filePath) ? String(fs.readFileSync(filePath, "utf8") || "") : "";
+  } catch {
+    existing = "";
+  }
+
+  const existingTracks = parseTracksLoose(existing, 50000);
+  const globalSeen = new Set(existingTracks.map((t) => normalizeTrackKey(t.name, t.artist)));
+
+  const kind = input && input.kind ? String(input.kind) : "";
+  const section = buildListSection(input && input.tracks ? input.tracks : [], stamp, kind, globalSeen);
+  if (!section) return { ok: true, path: filePath, skipped: true };
+
+  let headerEnd = 0;
+  if (existing.startsWith("#")) {
+    const firstNewline = existing.indexOf("\n");
+    headerEnd = firstNewline === -1 ? existing.length : firstNewline + 1;
+    while (headerEnd < existing.length && (existing[headerEnd] === "\n" || existing[headerEnd] === "\r")) headerEnd += 1;
+  }
+
+  const nextContent = existing.slice(0, headerEnd) + section + existing.slice(headerEnd);
+  try {
+    fs.writeFileSync(filePath, nextContent, "utf8");
+  } catch (e) {
+    const message = e && e.message ? String(e.message) : String(e);
+    return { ok: false, error: `write failed: ${message}` };
+  }
+
+  return { ok: true, path: filePath, inserted: true, stamp, kind };
+}
+
 function ensureMusicFile(input) {
   const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
   const folder = path.join(os.homedir(), "Documents", "Claudiofm");
@@ -589,6 +784,18 @@ readNativeMessageStream(async (msg) => {
     }
     if (msg.type === "readMemoryFile") {
       sendNativeMessage(readMemoryFile());
+      return;
+    }
+    if (msg.type === "readListFile") {
+      sendNativeMessage(readListFile());
+      return;
+    }
+    if (msg.type === "importListTracks") {
+      sendNativeMessage(importListTracks(msg));
+      return;
+    }
+    if (msg.type === "prependListSection") {
+      sendNativeMessage(prependListSection(msg));
       return;
     }
     if (msg.type === "ensureMusicFile") {

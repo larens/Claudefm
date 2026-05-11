@@ -31,23 +31,32 @@
           </div>
         </div>
         <div class="topActions">
-          <button class="iconBtn iconBtnSoft" id="btnMemory" aria-label="记忆">
+          <button class="iconBtn iconBtnSoft" id="btnSoul" aria-label="灵魂">
             <span class="iconSlot" aria-hidden="true">
               <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 9h6" />
-                <path d="M9 13h4" />
-                <path d="M8 3h8a3 3 0 0 1 3 3v11a3 3 0 0 1-3 3H9l-4 2V6a3 3 0 0 1 3-3z" />
+                <path d="M9 14c.4 1.8 2 3 4 3 2.8 0 5-2.5 5-5.5 0-2.8-1.8-5-4.3-5.4" />
+                <path d="M6 14c0-2.2 1.3-4 3-4 1.9 0 3 1.5 3 3.2 0 1.8-1.2 3.3-3 3.3-1.7 0-3-1.2-3-2.5z" />
+                <path d="M7.5 9.5c0-2.5 1.8-4.5 4.2-4.5 1.9 0 3.6 1.2 4.1 3" />
+              </svg>
+            </span>
+          </button>
+          <button class="iconBtn iconBtnSoft" id="btnHistory" aria-label="历史">
+            <span class="iconSlot" aria-hidden="true">
+              <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 1 0 3-6.7" />
+                <path d="M3 4v4h4" />
+                <path d="M12 7v6l4 2" />
               </svg>
             </span>
           </button>
         </div>
       </div>
 
-      <div class="memoryPanel" id="memoryPanel" hidden>
-        <div class="memoryCard" role="dialog" aria-modal="true" aria-label="记忆">
+      <div class="memoryPanel" id="soulPanel" hidden>
+        <div class="memoryCard" role="dialog" aria-modal="true" aria-label="灵魂">
           <div class="memoryHeader">
-            <div class="memoryTitle">记忆</div>
-            <button class="iconBtn iconBtnSoft" id="btnMemoryClose" aria-label="关闭">
+            <div class="memoryTitle">灵魂</div>
+            <button class="iconBtn iconBtnSoft" id="btnSoulClose" aria-label="关闭">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6L6 18" />
@@ -56,8 +65,53 @@
               </span>
             </button>
           </div>
-          <div class="memoryStatus" id="memoryStatus"></div>
-          <pre class="memoryContent" id="memoryContent"></pre>
+          <div class="memoryStatus" id="soulStatus"></div>
+          <pre class="memoryContent" id="soulContent"></pre>
+        </div>
+      </div>
+
+      <div class="memoryPanel" id="historyPanel" hidden>
+        <div class="memoryCard" role="dialog" aria-modal="true" aria-label="历史">
+          <div class="historyHeader">
+            <div class="historyLeft">
+              <button class="iconBtn iconBtnSoft" id="btnHistoryBack" aria-label="返回" hidden>
+                <span class="iconSlot" aria-hidden="true">
+                  <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                </span>
+              </button>
+              <button class="iconBtn iconBtnSoft" id="btnHistoryImport" aria-label="导入" hidden>
+                <span class="iconSlot" aria-hidden="true">
+                  <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 3v10" />
+                    <path d="M8 9l4 4 4-4" />
+                    <path d="M4 21V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v13" />
+                    <path d="M4 21h16" />
+                  </svg>
+                </span>
+              </button>
+              <input id="historyImportFile" type="file" accept=".txt,.csv,text/plain,text/csv" hidden />
+            </div>
+            <div class="historyTitle" id="historyTitle">历史</div>
+            <button class="iconBtn iconBtnSoft" id="btnHistoryClose" aria-label="关闭">
+              <span class="iconSlot" aria-hidden="true">
+                <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </span>
+            </button>
+          </div>
+          <div class="memoryStatus" id="historyStatus"></div>
+          <div class="historyBody">
+            <div class="historyList" id="historyList"></div>
+            <div class="historyDetail" id="historyDetail" hidden>
+              <div class="historyDetailName" id="historyDetailName"></div>
+              <div class="historyDetailArtist" id="historyDetailArtist"></div>
+              <pre class="historyDetailRaw" id="historyDetailRaw"></pre>
+            </div>
+          </div>
         </div>
       </div>
 

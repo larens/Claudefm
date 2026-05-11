@@ -21,11 +21,25 @@ const elBtnQueue = document.getElementById("btnQueue");
 const elQueue = document.getElementById("queue");
 const elQueueList = document.getElementById("queueList");
 const elQueueCount = document.getElementById("queueCount");
-const elBtnMemory = document.getElementById("btnMemory");
-const elMemoryPanel = document.getElementById("memoryPanel");
-const elMemoryClose = document.getElementById("btnMemoryClose");
-const elMemoryStatus = document.getElementById("memoryStatus");
-const elMemoryContent = document.getElementById("memoryContent");
+const elBtnSoul = document.getElementById("btnSoul");
+const elSoulPanel = document.getElementById("soulPanel");
+const elSoulClose = document.getElementById("btnSoulClose");
+const elSoulStatus = document.getElementById("soulStatus");
+const elSoulContent = document.getElementById("soulContent");
+
+const elBtnHistory = document.getElementById("btnHistory");
+const elHistoryPanel = document.getElementById("historyPanel");
+const elHistoryClose = document.getElementById("btnHistoryClose");
+const elHistoryBack = document.getElementById("btnHistoryBack");
+const elHistoryImport = document.getElementById("btnHistoryImport");
+const elHistoryImportFile = document.getElementById("historyImportFile");
+const elHistoryTitle = document.getElementById("historyTitle");
+const elHistoryStatus = document.getElementById("historyStatus");
+const elHistoryList = document.getElementById("historyList");
+const elHistoryDetail = document.getElementById("historyDetail");
+const elHistoryDetailName = document.getElementById("historyDetailName");
+const elHistoryDetailArtist = document.getElementById("historyDetailArtist");
+const elHistoryDetailRaw = document.getElementById("historyDetailRaw");
 
 const elTrackTitle = document.getElementById("trackTitle");
 const elTrackTime = document.getElementById("trackTime");
@@ -57,6 +71,11 @@ let preloadIndex = -1;
 let preloadStatus = "idle";
 let preloadRequestToken = 0;
 let playRequestToken = 0;
+
+let historySections = [];
+let historySelectedIndex = -1;
+let historyView = "list";
+let historyPath = "";
 
 elDjDisplay.hidden = false;
 elDjEdit.hidden = true;
@@ -398,38 +417,416 @@ function setHint(text) {
   }, 2600);
 }
 
-function setMemoryStatus(text) {
-  if (!elMemoryStatus) return;
-  elMemoryStatus.textContent = text ? String(text) : "";
+function setSoulStatus(text) {
+  if (!elSoulStatus) return;
+  elSoulStatus.textContent = text ? String(text) : "";
 }
 
-function openMemoryPanel() {
-  if (!elMemoryPanel) return;
-  elMemoryPanel.hidden = false;
-  setMemoryStatus("正在读取…");
+function openSoulPanel() {
+  if (!elSoulPanel) return;
+  elSoulPanel.hidden = false;
+  setSoulStatus("正在读取…");
 }
 
-function closeMemoryPanel() {
-  if (!elMemoryPanel) return;
-  elMemoryPanel.hidden = true;
+function closeSoulPanel() {
+  if (!elSoulPanel) return;
+  elSoulPanel.hidden = true;
 }
 
-async function refreshMemoryFromFile() {
-  setMemoryStatus("正在读取 /Users/lairuisi/Documents/Claudiofm/music.md …");
+async function refreshSoulFromFile() {
+  setSoulStatus("正在读取 ~/Documents/Claudiofm/music.md …");
   try {
     const resp = await chrome.runtime.sendMessage({ type: "readMemoryFile" });
     if (!resp?.ok) {
-      setMemoryStatus(`读取失败：${resp?.error || "unknown"}`);
-      if (elMemoryContent) elMemoryContent.textContent = "(空)";
+      setSoulStatus(`读取失败：${resp?.error || "unknown"}`);
+      if (elSoulContent) elSoulContent.textContent = "(空)";
       return;
     }
     const content = resp?.content ? String(resp.content) : "";
-    if (elMemoryContent) elMemoryContent.textContent = content && content.trim() ? content.trim() : "(空)";
-    setMemoryStatus(`已加载：${resp.path || "/Users/lairuisi/Documents/Claudiofm/music.md"}`);
+    if (elSoulContent) elSoulContent.textContent = content && content.trim() ? content.trim() : "(空)";
+    setSoulStatus(`已加载：${resp.path || "~/Documents/Claudiofm/music.md"}`);
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setMemoryStatus(`读取失败：${message}`);
-    if (elMemoryContent) elMemoryContent.textContent = "(空)";
+    setSoulStatus(`读取失败：${message}`);
+    if (elSoulContent) elSoulContent.textContent = "(空)";
+  }
+}
+
+function normalizeHistoryKey(name, artist) {
+  const n = String(name || "")
+    .toLowerCase()
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+  const a = String(artist || "")
+    .toLowerCase()
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+  return `${n}|${a}`;
+}
+
+function parseTracksLoose(text, maxTracks = 5000) {
+  const tracks = [];
+  const raw = String(text || "");
+  if (!raw.trim()) return tracks;
+  const lines = raw.split(/\r?\n/g);
+  for (const rawLine of lines) {
+    const line = String(rawLine || "").trim();
+    if (!line) continue;
+    if (line.startsWith("#")) continue;
+    const patterns = [
+      /^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+      /^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+      /^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$/u,
+      /^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/u,
+      /^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$/u,
+    ];
+    let hit = null;
+    for (const re of patterns) {
+      const m = line.match(re);
+      if (!m) continue;
+      const name = String(m[1] || "").trim();
+      const artist = String(m[2] || "").trim();
+      if (!name || !artist) continue;
+      if (["歌曲", "歌手", "name", "artist", "title"].includes(name)) continue;
+      hit = { name, artist, raw: line };
+      break;
+    }
+    if (!hit) {
+      const parts = line
+        .split(/[,\t|]+/g)
+        .map((p) => String(p || "").trim())
+        .filter(Boolean);
+      if (parts.length >= 2 && !["歌曲", "歌手", "name", "artist", "title"].includes(parts[0])) {
+        hit = { name: parts[0], artist: parts[1], raw: line };
+      }
+    }
+    if (hit) tracks.push(hit);
+    if (tracks.length >= maxTracks) break;
+  }
+  return tracks;
+}
+
+function splitCsvLine(line) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  const s = String(line || "");
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '"') {
+      if (inQuotes && s[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+  return cells.map((c) => String(c || "").trim());
+}
+
+function parseCsvTracks(text, maxTracks = 5000) {
+  const rows = String(text || "")
+    .split(/\r?\n/g)
+    .map((l) => String(l || "").trim())
+    .filter(Boolean);
+  if (!rows.length) return [];
+
+  const first = splitCsvLine(rows[0]);
+  const firstLower = first.map((c) => c.toLowerCase());
+  const nameKeys = ["name", "title", "song", "歌曲", "歌名"];
+  const artistKeys = ["artist", "singer", "歌手", "艺人"];
+  const idxName = firstLower.findIndex((c) => nameKeys.some((k) => c.includes(k)));
+  const idxArtist = firstLower.findIndex((c) => artistKeys.some((k) => c.includes(k)));
+  const hasHeader = idxName !== -1 && idxArtist !== -1;
+
+  const start = hasHeader ? 1 : 0;
+  const tracks = [];
+  for (let i = start; i < rows.length; i += 1) {
+    const cells = splitCsvLine(rows[i]);
+    const name = String(cells[hasHeader ? idxName : 0] || "").trim();
+    const artist = String(cells[hasHeader ? idxArtist : 1] || "").trim();
+    if (!name || !artist) continue;
+    tracks.push({ name, artist, raw: rows[i] });
+    if (tracks.length >= maxTracks) break;
+  }
+  return tracks;
+}
+
+function parseSectionTimestampMs(stamp) {
+  const raw = String(stamp || "").trim();
+  if (!raw) return null;
+  const iso = raw.replace(" ", "T");
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function parseListMdSections(text, maxSections = 1000) {
+  const raw = String(text || "");
+  const lines = raw.split(/\r?\n/g);
+
+  const patterns = [
+    /^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+    /^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
+    /^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$/u,
+    /^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/u,
+    /^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$/u,
+  ];
+
+  const parseTrackLine = (line) => {
+    const s = String(line || "").trim();
+    if (!s || s.startsWith("#")) return null;
+    for (const re of patterns) {
+      const m = s.match(re);
+      if (!m) continue;
+      const name = String(m[1] || "").trim();
+      const artist = String(m[2] || "").trim();
+      if (!name || !artist) continue;
+      if (["歌曲", "歌手", "name", "artist", "title"].includes(name)) continue;
+      return { name, artist, raw: s };
+    }
+    const parts = s
+      .split(/[,\t|]+/g)
+      .map((p) => String(p || "").trim())
+      .filter(Boolean);
+    if (parts.length >= 2 && !["歌曲", "歌手", "name", "artist", "title"].includes(parts[0])) {
+      return { name: parts[0], artist: parts[1], raw: s };
+    }
+    return null;
+  };
+
+  const sections = [];
+  let current = null;
+  let ungrouped = [];
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || "").trimEnd();
+    const trimmed = line.trim();
+    if (trimmed.startsWith("## ")) {
+      if (current) sections.push(current);
+      const stamp = trimmed.replace(/^##\s+/, "").trim();
+      current = {
+        stamp,
+        timestampMs: parseSectionTimestampMs(stamp),
+        kind: "",
+        tracks: [],
+      };
+      if (sections.length >= maxSections) break;
+      continue;
+    }
+    if (current && (trimmed.startsWith("> kind:") || trimmed.startsWith("<!-- kind:"))) {
+      const m = trimmed.match(/kind:\s*([a-zA-Z0-9_-]+)/);
+      if (m && m[1]) current.kind = String(m[1]).trim().toLowerCase();
+      continue;
+    }
+    const t = parseTrackLine(trimmed);
+    if (!t) continue;
+    if (current) current.tracks.push(t);
+    else ungrouped.push(t);
+  }
+  if (current) sections.push(current);
+
+  if (ungrouped.length) {
+    sections.push({ stamp: "未分组", timestampMs: null, tracks: ungrouped });
+  }
+
+  return sections;
+}
+
+function setHistoryStatus(text) {
+  if (!elHistoryStatus) return;
+  elHistoryStatus.textContent = text ? String(text) : "";
+}
+
+function setHistoryView(nextView) {
+  historyView = "list";
+  if (elHistoryBack) elHistoryBack.hidden = true;
+  if (elHistoryImport) {
+    elHistoryImport.hidden = false;
+    elHistoryImport.removeAttribute("hidden");
+  }
+  if (elHistoryList) elHistoryList.hidden = false;
+  if (elHistoryDetail) elHistoryDetail.hidden = true;
+  if (elHistoryTitle) elHistoryTitle.textContent = "历史";
+}
+
+function renderHistoryList() {
+  if (!elHistoryList) return;
+  elHistoryList.innerHTML = "";
+  if (!Array.isArray(historySections) || historySections.length === 0) {
+    const empty = document.createElement("div");
+    empty.style.padding = "10px 2px";
+    empty.style.fontSize = "12px";
+    empty.style.color = "var(--muted)";
+    empty.textContent = "最近 7 天暂无历史记录";
+    elHistoryList.appendChild(empty);
+    return;
+  }
+
+  let globalIndex = 0;
+  historySections.forEach((section) => {
+    const stamp = section?.stamp ? String(section.stamp) : "";
+    const divider = document.createElement("div");
+    divider.className = "historyDivider";
+    const row = document.createElement("div");
+    row.className = "historyDividerRow";
+    const icon = document.createElement("span");
+    icon.className = "historyDividerIcon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v3"/><path d="M16 2v3"/><path d="M3.5 9h17"/><path d="M5 6h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/></svg>`;
+    const text = document.createElement("span");
+    text.className = "historyDividerText";
+    text.textContent = stamp || "未命名";
+    row.appendChild(icon);
+    row.appendChild(text);
+    divider.appendChild(row);
+    elHistoryList.appendChild(divider);
+
+    const tracks = Array.isArray(section?.tracks) ? section.tracks : [];
+    tracks.forEach((t) => {
+      globalIndex += 1;
+      const row = document.createElement("div");
+      row.className = "queueItem";
+
+      const prefix = document.createElement("div");
+      prefix.className = "queuePrefix";
+
+      const index = document.createElement("div");
+      index.className = "queueIndex";
+      index.textContent = String(globalIndex);
+      prefix.appendChild(index);
+
+      const meta = document.createElement("div");
+      meta.className = "queueText";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = t?.name ? String(t.name) : "未知歌曲";
+      const artist = document.createElement("div");
+      artist.className = "artist";
+      artist.textContent = t?.artist ? String(t.artist) : "";
+      meta.appendChild(name);
+      meta.appendChild(artist);
+
+      row.appendChild(prefix);
+      row.appendChild(meta);
+      elHistoryList.appendChild(row);
+    });
+  });
+}
+
+function openHistoryDetail(index) {
+  return;
+}
+
+function openHistoryPanel() {
+  if (!elHistoryPanel) return;
+  elHistoryPanel.hidden = false;
+  setHistoryView("list");
+  setHistoryStatus("正在读取…");
+}
+
+function closeHistoryPanel() {
+  if (!elHistoryPanel) return;
+  elHistoryPanel.hidden = true;
+}
+
+async function refreshHistoryFromFile() {
+  setHistoryStatus("正在读取 ~/Documents/Claudiofm/list.md …");
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "readListFile" });
+    if (!resp?.ok) {
+      setHistoryStatus(`读取失败：${resp?.error || "unknown"}`);
+      historySections = [];
+      historyPath = "";
+      renderHistoryList();
+      return;
+    }
+    historyPath = resp?.path ? String(resp.path) : "";
+    const content = resp?.content ? String(resp.content) : "";
+    const allSections = parseListMdSections(content, 2000);
+    const now = Date.now();
+    const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+    historySections = allSections.filter((s) => {
+      if (s?.timestampMs == null || s.timestampMs < cutoff) return false;
+      const kind = String(s?.kind || "").trim().toLowerCase();
+      if (!kind) return true;
+      return kind !== "import";
+    });
+    renderHistoryList();
+    setHistoryView("list");
+    setHistoryStatus(`已加载：${historyPath || "~/Documents/Claudiofm/list.md"}（最近 7 天）`);
+  } catch (e) {
+    const message = e?.message ? String(e.message) : String(e);
+    setHistoryStatus(`读取失败：${message}`);
+    historySections = [];
+    historyPath = "";
+    renderHistoryList();
+  }
+}
+
+async function importHistoryFile(file) {
+  const f = file;
+  if (!f) return;
+  setHistoryStatus(`正在导入：${f.name} …`);
+  await new Promise((r) => setTimeout(r, 0));
+
+  let text = "";
+  try {
+    text = await f.text();
+  } catch (e) {
+    const message = e?.message ? String(e.message) : String(e);
+    setHistoryStatus(`导入失败：${message}`);
+    return;
+  }
+
+  const lower = String(f.name || "").toLowerCase();
+  const lineCount = text ? text.split(/\r?\n/g).length : 0;
+  if (lineCount >= 1200) {
+    setHistoryStatus(`正在解析：${f.name}（${lineCount} 行）…`);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  const parsed = lower.endsWith(".csv") ? parseCsvTracks(text, 50000) : parseTracksLoose(text, 50000);
+  const seen = new Set();
+  const tracks = [];
+  for (const t of parsed) {
+    const name = String(t?.name || "").trim();
+    const artist = String(t?.artist || "").trim();
+    if (!name || !artist) continue;
+    const key = normalizeHistoryKey(name, artist);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    tracks.push({ name, artist });
+  }
+
+  if (!tracks.length) {
+    setHistoryStatus("导入失败：文件中未识别到可用的歌曲清单");
+    return;
+  }
+
+  try {
+    setHistoryStatus(`正在写入 list.md：共 ${tracks.length} 首…`);
+    await new Promise((r) => setTimeout(r, 0));
+    const resp = await chrome.runtime.sendMessage({ type: "prependListSection", kind: "import", tracks });
+    if (!resp?.ok) {
+      setHistoryStatus(`导入失败：${resp?.error || "unknown"}`);
+      return;
+    }
+    if (resp?.skipped) {
+      setHistoryStatus("导入完成：未新增（可能全部与历史重复）");
+    } else {
+      setHistoryStatus(`导入完成：已写入一个新分段（## ${resp?.stamp || "当前时间"}）`);
+    }
+    await refreshHistoryFromFile();
+  } catch (e) {
+    const message = e?.message ? String(e.message) : String(e);
+    setHistoryStatus(`导入失败：${message}`);
   }
 }
 
@@ -1051,33 +1448,77 @@ elBtnMic.addEventListener("click", async () => {
   }
 });
 
-if (elBtnMemory && elMemoryPanel) {
-  elBtnMemory.addEventListener("click", async () => {
-    const nextOpen = elMemoryPanel.hidden;
+if (elBtnSoul && elSoulPanel) {
+  elBtnSoul.addEventListener("click", async () => {
+    const nextOpen = elSoulPanel.hidden;
     if (nextOpen) {
-      openMemoryPanel();
-      await refreshMemoryFromFile();
+      closeHistoryPanel();
+      openSoulPanel();
+      await refreshSoulFromFile();
     } else {
-      closeMemoryPanel();
+      closeSoulPanel();
     }
   });
 }
 
-if (elMemoryClose) {
-  elMemoryClose.addEventListener("click", () => closeMemoryPanel());
+if (elSoulClose) {
+  elSoulClose.addEventListener("click", () => closeSoulPanel());
 }
 
-if (elMemoryPanel) {
-  elMemoryPanel.addEventListener("click", (e) => {
-    if (e.target === elMemoryPanel) closeMemoryPanel();
+if (elSoulPanel) {
+  elSoulPanel.addEventListener("click", (e) => {
+    if (e.target === elSoulPanel) closeSoulPanel();
+  });
+}
+
+if (elBtnHistory && elHistoryPanel) {
+  elBtnHistory.addEventListener("click", async () => {
+    const nextOpen = elHistoryPanel.hidden;
+    if (nextOpen) {
+      closeSoulPanel();
+      openHistoryPanel();
+      await refreshHistoryFromFile();
+    } else {
+      closeHistoryPanel();
+    }
+  });
+}
+
+if (elHistoryClose) {
+  elHistoryClose.addEventListener("click", () => closeHistoryPanel());
+}
+
+if (elHistoryPanel) {
+  elHistoryPanel.addEventListener("click", (e) => {
+    if (e.target === elHistoryPanel) closeHistoryPanel();
+  });
+}
+
+if (elHistoryBack) {
+  elHistoryBack.addEventListener("click", () => setHistoryView("list"));
+}
+
+if (elHistoryImport && elHistoryImportFile) {
+  elHistoryImport.addEventListener("click", () => {
+    elHistoryImportFile.value = "";
+    elHistoryImportFile.click();
+  });
+  elHistoryImportFile.addEventListener("change", async () => {
+    const file = elHistoryImportFile.files?.[0] || null;
+    elHistoryImportFile.value = "";
+    if (!file) return;
+    await importHistoryFile(file);
   });
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (elMemoryPanel && !elMemoryPanel.hidden) {
+  if (elHistoryPanel && !elHistoryPanel.hidden) {
     e.preventDefault();
-    closeMemoryPanel();
+    closeHistoryPanel();
+  } else if (elSoulPanel && !elSoulPanel.hidden) {
+    e.preventDefault();
+    closeSoulPanel();
   }
 });
 

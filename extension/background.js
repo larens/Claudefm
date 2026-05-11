@@ -330,6 +330,9 @@ async function onChat(text) {
   try {
     await appendDailyConversation("chat", text, resp.result);
   } catch {}
+  try {
+    await prependListSection("chat", resp.result);
+  } catch {}
 
   if (nextTurnCount % 10 === 0) {
     try {
@@ -356,6 +359,43 @@ async function exportMemoryMd() {
 
 async function readMemoryFile() {
   return await sendNative({ type: "readMemoryFile" });
+}
+
+async function readListFile() {
+  return await sendNative({ type: "readListFile" });
+}
+
+async function importListTracks(tracks) {
+  return await sendNative({ type: "importListTracks", tracks: Array.isArray(tracks) ? tracks : [] });
+}
+
+async function prependListSection(kind, result) {
+  const k = String(kind || "").trim() || "chat";
+  const play = result && typeof result === "object" ? result.play : null;
+  const tracks = Array.isArray(play)
+    ? play
+        .map((t) => ({
+          name: String(t?.name || "").trim(),
+          artist: String(t?.artist || "").trim(),
+        }))
+        .filter((t) => t.name && t.artist)
+    : [];
+  if (!tracks.length) return { ok: true, skipped: true };
+  return await sendNative({ type: "prependListSection", kind: k, tracks });
+}
+
+async function prependListSectionTracks(kind, tracks) {
+  const k = String(kind || "").trim() || "chat";
+  const cleaned = Array.isArray(tracks)
+    ? tracks
+        .map((t) => ({
+          name: String(t?.name || "").trim(),
+          artist: String(t?.artist || "").trim(),
+        }))
+        .filter((t) => t.name && t.artist)
+    : [];
+  if (!cleaned.length) return { ok: true, skipped: true };
+  return await sendNative({ type: "prependListSection", kind: k, tracks: cleaned });
 }
 
 function requestLocationFromPort(port) {
@@ -443,6 +483,9 @@ async function maybeWelcome(port) {
       try {
         await appendDailyConversation("welcome", "", resp.result);
       } catch {}
+      try {
+        await prependListSection("welcome", resp.result);
+      } catch {}
       autoRecommendDone = true;
     } else {
       broadcast({
@@ -523,6 +566,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.type === "readMemoryFile") {
         const res = await readMemoryFile();
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "readListFile") {
+        const res = await readListFile();
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "importListTracks") {
+        const res = await importListTracks(msg.tracks);
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "prependListSection") {
+        const res = await prependListSectionTracks(msg.kind, msg.tracks);
         sendResponse(res);
         return;
       }
