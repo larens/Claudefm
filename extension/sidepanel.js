@@ -58,6 +58,7 @@ const elSettingsStatus = document.getElementById("settingsStatus");
 const elSettingsHint = document.getElementById("settingsHint");
 const elSettingsDjNameInput = document.getElementById("settingsDjNameInput");
 const elSettingsDjNameSave = document.getElementById("settingsDjNameSave");
+const elTtsVoiceCount = document.getElementById("ttsVoiceCount");
 const elTtsVoiceSelect = document.getElementById("ttsVoiceSelect");
 
 const elTrackTitle = document.getElementById("trackTitle");
@@ -481,7 +482,16 @@ function setSoulStatus(text) {
 
 function setSettingsStatus(text) {
   if (!elSettingsStatus) return;
-  elSettingsStatus.textContent = text ? String(text) : "";
+  const t = text ? String(text) : "";
+  const cleaned = t.trim();
+  elSettingsStatus.textContent = cleaned;
+  if (cleaned) {
+    elSettingsStatus.hidden = false;
+    elSettingsStatus.removeAttribute("hidden");
+  } else {
+    elSettingsStatus.hidden = true;
+    elSettingsStatus.setAttribute("hidden", "");
+  }
 }
 
 function refreshSettingsDjNameUI() {
@@ -552,6 +562,7 @@ async function refreshTtsSettingsUI() {
   if (!elTtsVoiceSelect || !elSettingsHint) return;
   if (!("speechSynthesis" in window)) {
     setSettingsStatus("当前浏览器不支持语音合成");
+    if (elTtsVoiceCount) elTtsVoiceCount.textContent = "";
     elTtsVoiceSelect.innerHTML = "";
     elSettingsHint.textContent = "";
     return;
@@ -580,7 +591,10 @@ async function refreshTtsSettingsUI() {
     elTtsVoiceSelect.value = "";
   }
 
-  setSettingsStatus(list.length ? `可用音色：${list.length} 个` : "未发现可用音色");
+  setSettingsStatus("");
+  if (elTtsVoiceCount) {
+    elTtsVoiceCount.textContent = list.length ? `（可用音色：${list.length} 个）` : "（未发现可用音色）";
+  }
   elSettingsHint.textContent = zhVoices.length
     ? "已优先展示中文音色"
     : list.length

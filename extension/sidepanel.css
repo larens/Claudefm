@@ -154,6 +154,11 @@ body {
   color: var(--muted);
 }
 
+.settingsMeta {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
 .settingsInput {
   flex: 1;
   min-width: 0;
