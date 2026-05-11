@@ -120,6 +120,13 @@ let historyPath = "";
 let historyCoverByKey = {};
 let historyCoverRenderToken = 0;
 
+let lastChatText = "";
+let recommendCardEl = null;
+let pendingAssistantEl = null;
+let pendingAssistantToken = 0;
+let pendingAssistantTimerA = null;
+let pendingAssistantTimerB = null;
+
 if (elDjDisplay) elDjDisplay.hidden = false;
 
 function getAudioDebugInfo(audio) {
@@ -407,6 +414,32 @@ function clearRecommendCard() {
   recommendCardEl = null;
 }
 
+function clearPendingAssistant() {
+  if (pendingAssistantTimerA) clearTimeout(pendingAssistantTimerA);
+  if (pendingAssistantTimerB) clearTimeout(pendingAssistantTimerB);
+  pendingAssistantTimerA = null;
+  pendingAssistantTimerB = null;
+  if (pendingAssistantEl && pendingAssistantEl.isConnected) pendingAssistantEl.remove();
+  pendingAssistantEl = null;
+}
+
+function startPendingAssistant() {
+  clearPendingAssistant();
+  const token = ++pendingAssistantToken;
+  pendingAssistantEl = appendMessageDom("assistant", "正在思考…");
+  pendingAssistantEl.classList.add("pending");
+  pendingAssistantTimerA = setTimeout(() => {
+    if (token !== pendingAssistantToken) return;
+    if (!pendingAssistantEl || !pendingAssistantEl.isConnected) return;
+    pendingAssistantEl.textContent = "还在生成回复…";
+  }, 12000);
+  pendingAssistantTimerB = setTimeout(() => {
+    if (token !== pendingAssistantToken) return;
+    if (!pendingAssistantEl || !pendingAssistantEl.isConnected) return;
+    pendingAssistantEl.textContent = "回复有点慢，可能在排队/Host 忙，请稍等…";
+  }, 25000);
+}
+
 function showRecommendConfirm(question) {
   clearRecommendCard();
   const wrap = document.createElement("div");
@@ -428,6 +461,7 @@ function showRecommendConfirm(question) {
     if (!seed) return;
     clearRecommendCard();
     appendMessage("user", "推荐一份歌单");
+    startPendingAssistant();
     try {
       void chrome.runtime.sendMessage({ type: "chat", text: seed, forceRecommend: true });
     } catch {}
@@ -1879,6 +1913,7 @@ port.onMessage.addListener(async (msg) => {
     return;
   }
   if (msg.type === "chatResult") {
+    clearPendingAssistant();
     await handleAssistantResult(msg.result);
     if (elSoulPanel && !elSoulPanel.hidden) {
       try {
@@ -1918,6 +1953,10 @@ elSend.addEventListener("click", async () => {
     } catch {}
     return;
   }
+  if (pendingAssistantEl && pendingAssistantEl.isConnected) {
+    setHint("上一条还在生成回复…");
+    return;
+  }
   const text = elInput.value.trim();
   if (!text) return;
   elInput.value = "";
@@ -1925,10 +1964,12 @@ elSend.addEventListener("click", async () => {
   appendMessage("user", text);
   lastChatText = text;
   clearRecommendCard();
+  startPendingAssistant();
   try {
-    await chrome.runtime.sendMessage({ type: "chat", text });
+    void chrome.runtime.sendMessage({ type: "chat", text });
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
+    clearPendingAssistant();
     appendMessage("assistant", `发送失败：${message}`);
   }
 });
