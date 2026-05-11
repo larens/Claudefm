@@ -1,4 +1,19 @@
 const port = chrome.runtime.connect({ name: "sidepanel" });
+let portDisconnected = false;
+try {
+  port.onDisconnect.addListener(() => {
+    portDisconnected = true;
+  });
+} catch {}
+
+function safePost(msg) {
+  if (portDisconnected) return;
+  try {
+    port.postMessage(msg);
+  } catch {
+    portDisconnected = true;
+  }
+}
 
 const elChat = document.getElementById("chat");
 const elInput = document.getElementById("input");
@@ -220,7 +235,7 @@ async function activatePreloadedTrack(index) {
   updateTimeUI(activeAudio.currentTime, activeAudio.duration);
   updateProgressUI(activeAudio.currentTime, activeAudio.duration);
   setPlayingUI(true);
-  port.postMessage({ type: "playbackState", playing: true });
+  safePost({ type: "playbackState", playing: true });
   schedulePreloadForNextTrack();
   return true;
 }
@@ -1119,13 +1134,13 @@ async function playAt(i) {
     const text = track?.text ? String(track.text).trim() : "";
     if (!text) {
       setHint("插播内容为空");
-      port.postMessage({ type: "playbackState", playing: false });
+      safePost({ type: "playbackState", playing: false });
       return;
     }
     speechActive = true;
     speechPaused = false;
     setPlayingUI(true);
-    port.postMessage({ type: "playbackState", playing: true });
+    safePost({ type: "playbackState", playing: true });
     schedulePreloadForNextTrack();
     refreshVoiceCache();
     const u = new SpeechSynthesisUtterance(text);
@@ -1144,7 +1159,7 @@ async function playAt(i) {
     speechActive = false;
     speechPaused = false;
     setPlayingUI(false);
-    port.postMessage({ type: "playbackState", playing: false });
+    safePost({ type: "playbackState", playing: false });
     await playNext();
     return;
   }
@@ -1198,7 +1213,7 @@ async function playAt(i) {
   }
   if (token !== playRequestToken) return;
   setPlayingUI(true);
-  port.postMessage({ type: "playbackState", playing: true });
+  safePost({ type: "playbackState", playing: true });
   schedulePreloadForNextTrack();
 }
 
@@ -1313,7 +1328,7 @@ port.onMessage.addListener(async (msg) => {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "requestLocation") {
     if (!("geolocation" in navigator) || typeof navigator.geolocation?.getCurrentPosition !== "function") {
-      port.postMessage({ type: "locationResult", ok: false, error: "geolocation unsupported" });
+      safePost({ type: "locationResult", ok: false, error: "geolocation unsupported" });
       return;
     }
     try {
@@ -1336,11 +1351,11 @@ port.onMessage.addListener(async (msg) => {
         );
       });
       if (!result.ok) setHint("定位失败，已使用时间与历史记忆推荐");
-      port.postMessage({ type: "locationResult", ...result });
+      safePost({ type: "locationResult", ...result });
     } catch (e) {
       const message = e?.message ? String(e.message) : String(e);
       setHint("定位失败，已使用时间与历史记忆推荐");
-      port.postMessage({ type: "locationResult", ok: false, error: message });
+      safePost({ type: "locationResult", ok: false, error: message });
     }
     return;
   }
@@ -1359,7 +1374,7 @@ port.onMessage.addListener(async (msg) => {
       elInterruptHint.hidden = false;
       await activeAudio.pause();
       setPlayingUI(false);
-      port.postMessage({ type: "playbackState", playing: false });
+      safePost({ type: "playbackState", playing: false });
     }
     return;
   }
@@ -1370,7 +1385,7 @@ port.onMessage.addListener(async (msg) => {
       try {
         await activeAudio.play();
         setPlayingUI(true);
-        port.postMessage({ type: "playbackState", playing: true });
+        safePost({ type: "playbackState", playing: true });
       } catch {}
     }
     return;
@@ -1473,14 +1488,14 @@ elBtnPlay.addEventListener("click", async () => {
         window.speechSynthesis.resume();
       } catch {}
       setPlayingUI(true);
-      port.postMessage({ type: "playbackState", playing: true });
+      safePost({ type: "playbackState", playing: true });
     } else {
       speechPaused = true;
       try {
         window.speechSynthesis.pause();
       } catch {}
       setPlayingUI(false);
-      port.postMessage({ type: "playbackState", playing: false });
+      safePost({ type: "playbackState", playing: false });
     }
     return;
   }
@@ -1493,13 +1508,13 @@ elBtnPlay.addEventListener("click", async () => {
     try {
       await activeAudio.play();
       setPlayingUI(true);
-      port.postMessage({ type: "playbackState", playing: true });
+      safePost({ type: "playbackState", playing: true });
     } catch {}
   } else {
     userPaused = true;
     await activeAudio.pause();
     setPlayingUI(false);
-    port.postMessage({ type: "playbackState", playing: false });
+    safePost({ type: "playbackState", playing: false });
   }
 });
 
@@ -1510,13 +1525,13 @@ function bindAudioEvents(audio, label) {
   audio.addEventListener("play", () => {
     if (audio !== activeAudio) return;
     setPlayingUI(true);
-    port.postMessage({ type: "playbackState", playing: true });
+    safePost({ type: "playbackState", playing: true });
   });
 
   audio.addEventListener("pause", () => {
     if (audio !== activeAudio) return;
     setPlayingUI(false);
-    port.postMessage({ type: "playbackState", playing: false });
+    safePost({ type: "playbackState", playing: false });
   });
 
   audio.addEventListener("loadedmetadata", () => {
@@ -1833,7 +1848,7 @@ window.addEventListener("keydown", (e) => {
 });
 
 updateSendState();
-port.postMessage({ type: "ready" });
+safePost({ type: "ready" });
 
 (async () => {
   const prefs = await getPreferences();
