@@ -72,13 +72,7 @@ const elProgress = document.getElementById("progress");
 const elBtnPlay = document.getElementById("btnPlay");
 const elBtnNext = document.getElementById("btnNext");
 const elBtnPrev = document.getElementById("btnPrev");
-const elAudio = document.getElementById("audio");
 const elInterruptHint = document.getElementById("interruptHint");
-
-const audioA = elAudio;
-const audioB = new Audio();
-audioA.preload = "auto";
-audioB.preload = "auto";
 
 let queue = [];
 let queueIndex = -1;
@@ -90,21 +84,18 @@ let hintTimer = null;
 let recognizing = false;
 let recognition = null;
 let djName = "Claudio";
-let activeAudio = audioA;
-let preloadAudio = audioB;
 let preloadIndex = -1;
 let preloadStatus = "idle";
-let preloadRequestToken = 0;
-let playRequestToken = 0;
+let playerPlaying = false;
+let playerCurrentTime = 0;
+let playerDuration = 0;
+let currentTrack = null;
 
 let ttsVoiceId = "";
 let cachedVoices = [];
 
 let speechActive = false;
 let speechPaused = false;
-let segmentTarget = 0;
-let segmentTracks = [];
-let interludeInFlight = false;
 
 const SESSION_KEY = "sidepanelSessionV1";
 let keepSessionOnClose = true;
@@ -130,132 +121,82 @@ let pendingAssistantTimerB = null;
 
 if (elDjDisplay) elDjDisplay.hidden = false;
 
-function getAudioDebugInfo(audio) {
-  return {
-    src: audio.currentSrc || audio.src || "",
-    duration: audio.duration,
-    currentTime: audio.currentTime,
-    readyState: audio.readyState,
-    networkState: audio.networkState,
-  };
-}
-
-function resetAudioElement(audio) {
-  try {
-    audio.pause();
-  } catch {}
-  audio.removeAttribute("src");
-  audio.load();
-  audio.currentTime = 0;
-}
-
-function mergeResolvedTrack(track, resolved) {
-  const streamUrl = (resolved?.streamUrl || "").replace(/`/g, "").trim();
-  return {
-    ...track,
-    ...(resolved?.track || {}),
-    streamUrl,
-    provider: resolved?.provider || track.provider || "resolved",
-    cover: resolved?.cover || track.cover || "",
-    durationMs: resolved?.durationMs || track.durationMs || 0,
-  };
-}
-
-function isPreloadedTrack(index) {
-  return preloadIndex === index && preloadStatus === "ready" && Boolean(preloadAudio.src);
-}
-
-function clearPreload(reason = "reset") {
-  preloadRequestToken += 1;
-  preloadIndex = -1;
-  preloadStatus = "idle";
-  resetAudioElement(preloadAudio);
-  console.log("[preload] cleared", { reason });
-}
-
-async function prefetchTrackAt(index) {
-  if (index < 0 || index >= queue.length) return;
-  if (index === queueIndex) return;
-  if (preloadIndex === index && (preloadStatus === "resolving" || preloadStatus === "loading" || preloadStatus === "ready")) {
-    return;
+function resetCoverImage(cover, coverBox) {
+  if (cover) {
+    cover.hidden = true;
+    cover.removeAttribute("src");
   }
-
-  const track = queue[index];
-  if (!track) return;
-  if (isSpeechItem(track)) return;
-
-  const token = ++preloadRequestToken;
-  preloadIndex = index;
-  preloadStatus = "resolving";
-  console.log("[preload] start", { index, track });
-
-  try {
-    const resolved = await resolveTrack(track);
-    if (token !== preloadRequestToken) return;
-
-    const streamUrl = (resolved?.streamUrl || "").replace(/`/g, "").trim();
-    if (!streamUrl) throw new Error("prefetch resolve missing streamUrl");
-
-    const mergedTrack = mergeResolvedTrack(track, resolved);
-    queue[index] = mergedTrack;
-    preloadStatus = "loading";
-    resetAudioElement(preloadAudio);
-    preloadAudio.src = streamUrl;
-    preloadAudio.load();
-    console.log("[preload] loading", { index, track: mergedTrack, streamUrl });
-  } catch (error) {
-    if (token !== preloadRequestToken) return;
-    console.warn("[preload] failed", { index, track, error: String(error) });
-    preloadIndex = -1;
-    preloadStatus = "error";
-    resetAudioElement(preloadAudio);
-  }
+  if (coverBox) coverBox.classList.add("fallback");
 }
 
-function schedulePreloadForNextTrack() {
-  for (let i = queueIndex + 1; i >= 0 && i < queue.length; i += 1) {
-    const t = queue[i];
-    if (!t) continue;
-    if (isSpeechItem(t)) continue;
-    void prefetchTrackAt(i);
-    return;
-  }
-  clearPreload("no-next-track");
-}
-
-async function activatePreloadedTrack(index) {
-  if (!isPreloadedTrack(index)) return false;
-
-  const nextTrack = queue[index];
-  const previousAudio = activeAudio;
-  const nextAudio = preloadAudio;
-
-  console.log("[preload] swap", { index, track: nextTrack, audio: getAudioDebugInfo(nextAudio) });
-  try {
-    previousAudio.pause();
-  } catch {}
-
-  activeAudio = nextAudio;
-  preloadAudio = previousAudio;
-  preloadIndex = -1;
-  preloadStatus = "idle";
-
-  try {
-    await activeAudio.play();
-  } catch (error) {
-    console.error("[preload] swap play failed", error, { index, track: nextTrack });
-    activeAudio = previousAudio;
-    preloadAudio = nextAudio;
+function showCoverImage(cover, coverBox, coverUrl) {
+  const nextUrl = coverUrl ? String(coverUrl).trim() : "";
+  if (!cover || !coverBox || !nextUrl) {
+    resetCoverImage(cover, coverBox);
     return false;
   }
-
-  resetAudioElement(preloadAudio);
-  updateTimeUI(activeAudio.currentTime, activeAudio.duration);
-  updateProgressUI(activeAudio.currentTime, activeAudio.duration);
-  setPlayingUI(true);
-  safePost({ type: "playbackState", playing: true });
-  schedulePreloadForNextTrack();
+  cover.hidden = false;
+  coverBox.classList.remove("fallback");
+  cover.src = nextUrl;
+  if (cover.complete && cover.naturalWidth > 0) {
+    cover.hidden = false;
+    coverBox.classList.remove("fallback");
+  }
   return true;
+}
+
+function bindCoverImageState(cover, coverBox) {
+  if (!cover || !coverBox) return;
+  cover.addEventListener("load", () => {
+    cover.hidden = false;
+    coverBox.classList.remove("fallback");
+  });
+  cover.addEventListener("error", () => {
+    resetCoverImage(cover, coverBox);
+  });
+}
+
+bindCoverImageState(elHistoryDetailCover, elHistoryDetailCoverBox);
+
+async function sendPlayerCommand(type, payload = {}) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type, ...payload });
+    if (response?.state) applyPlayerState(response.state);
+    return response;
+  } catch (error) {
+    const message = error?.message ? String(error.message) : String(error);
+    setHint(`播放器通信失败：${message}`);
+    return { ok: false, error: message };
+  }
+}
+
+function applyPlayerState(state) {
+  if (!state || typeof state !== "object") return;
+  queue = Array.isArray(state.queue) ? state.queue.slice(0, 800) : [];
+  queueIndex = Number.isFinite(state.queueIndex) ? state.queueIndex : -1;
+  currentTrack = state.currentTrack && typeof state.currentTrack === "object" ? { ...state.currentTrack } : null;
+  playerPlaying = Boolean(state.playing);
+  playerCurrentTime = Number.isFinite(state.currentTime) ? Number(state.currentTime) : 0;
+  playerDuration = Number.isFinite(state.duration) ? Number(state.duration) : 0;
+  interrupted = Boolean(state.interrupted);
+  userPaused = Boolean(state.userPaused);
+  speechActive = Boolean(state.speechActive);
+  speechPaused = Boolean(state.speechPaused);
+  preloadIndex = Number.isFinite(state.preloadIndex) ? state.preloadIndex : -1;
+  preloadStatus = state.preloadStatus ? String(state.preloadStatus) : "idle";
+
+  const titleTrack = currentTrack || (queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null);
+  elTrackTitle.textContent = titleTrack ? buildTitle(titleTrack) : "未播放";
+  updateTimeUI(playerCurrentTime, playerDuration);
+  if (!seeking) updateProgressUI(playerCurrentTime, playerDuration);
+  setPlayingUI(playerPlaying);
+  if (elInterruptHint) elInterruptHint.hidden = !interrupted;
+  renderQueue();
+}
+
+async function requestPlayerState() {
+  const response = await sendPlayerCommand("player.getState");
+  if (response?.state) applyPlayerState(response.state);
 }
 
 async function ensureMicPermission() {
@@ -326,19 +267,6 @@ function buildTitle(track) {
   if (!name) return artist;
   if (!artist) return name;
   return `${name} - ${artist}`;
-}
-
-function randomInt(minInclusive, maxInclusive) {
-  const min = Number(minInclusive);
-  const max = Number(maxInclusive);
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return minInclusive;
-  return Math.floor(min + Math.random() * (max - min + 1));
-}
-
-function resetLyricSegment() {
-  segmentTracks = [];
-  segmentTarget = randomInt(3, 5);
-  interludeInFlight = false;
 }
 
 function isSpeechItem(track) {
@@ -512,12 +440,7 @@ function showRecommendPush(tracks, defaultSegue) {
   push.addEventListener("click", async () => {
     const segueText = String(textarea.value || "").trim();
     clearRecommendCard();
-
-    try {
-      clearPreload("new-playlist");
-    } catch {}
     segueSpokenInQueue = 0;
-    resetLyricSegment();
 
     const next = [];
     if (segueText) next.push(buildSegueItem(segueText));
@@ -528,12 +451,9 @@ function showRecommendPush(tracks, defaultSegue) {
         provider: t?.provider || "pending",
       }))
     );
-    queue = next;
-    queueIndex = -1;
-    renderQueue();
     setHint(`已推送 ${list.length} 首新歌单，正在播放`);
     try {
-      await playAt(0);
+      await sendPlayerCommand("player.replaceQueueAndPlay", { queue: next, startIndex: 0 });
     } catch {}
   });
 
@@ -552,19 +472,6 @@ function showRecommendPush(tracks, defaultSegue) {
   appendChatNode(wrap);
 }
 
-function sanitizeQueueForStorage(list) {
-  const tracks = Array.isArray(list) ? list : [];
-  return tracks.slice(0, 800).map((t) => {
-    if (!t || typeof t !== "object") return t;
-    const next = { ...t };
-    const cover = next.cover ? String(next.cover) : "";
-    if (cover.startsWith("data:") && cover.length > 3500) {
-      delete next.cover;
-    }
-    return next;
-  });
-}
-
 function scheduleSessionSave() {
   if (!keepSessionOnClose) return;
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
@@ -578,8 +485,6 @@ async function saveSessionNow() {
   if (!keepSessionOnClose) return;
   const payload = {
     messages: sessionMessages.slice(-220),
-    queue: sanitizeQueueForStorage(queue),
-    queueIndex,
   };
   try {
     await chrome.storage.local.set({ [SESSION_KEY]: payload });
@@ -604,8 +509,6 @@ async function restoreSessionIfAny() {
   if (!stored || typeof stored !== "object") return;
 
   const msgs = Array.isArray(stored.messages) ? stored.messages : [];
-  const nextQueue = Array.isArray(stored.queue) ? stored.queue : [];
-  const nextIndex = Number.isFinite(stored.queueIndex) ? stored.queueIndex : -1;
 
   sessionMessages = [];
   if (elChat) elChat.innerHTML = "";
@@ -616,14 +519,6 @@ async function restoreSessionIfAny() {
     sessionMessages.push({ role, text });
     appendMessageDom(role, text);
   });
-
-  queue = nextQueue.slice(0, 800);
-  queueIndex = Math.max(-1, Math.min(nextIndex, queue.length - 1));
-  renderQueue();
-  elTrackTitle.textContent = queueIndex >= 0 ? buildTitle(queue[queueIndex]) : "未播放";
-  updateTimeUI(0, 0);
-  updateProgressUI(0, 0);
-  setPlayingUI(false);
 }
 
 async function loadTrackVotes() {
@@ -824,43 +719,10 @@ function setHint(text) {
 
 async function startNewSession() {
   try {
-    userPaused = false;
-    interrupted = false;
-    seeking = false;
-    segueSpokenInQueue = 0;
-    resetLyricSegment();
-  } catch {}
-
-  try {
-    activeAudio.pause();
-  } catch {}
-  try {
-    activeAudio.currentTime = 0;
-  } catch {}
-  try {
-    activeAudio.removeAttribute("src");
-    activeAudio.load();
-  } catch {}
-
-  if ("speechSynthesis" in window) {
-    try {
-      window.speechSynthesis.cancel();
-    } catch {}
-  }
-
-  try {
     if (typeof window.removeStartPlayCard === "function") window.removeStartPlayCard();
   } catch {}
 
-  queue = [];
-  queueIndex = -1;
-  preloadIndex = -1;
-  preloadStatus = "idle";
-  renderQueue();
-  elTrackTitle.textContent = "未播放";
-  updateTimeUI(0, 0);
-  updateProgressUI(0, 0);
-  setPlayingUI(false);
+  await sendPlayerCommand("player.reset");
   setHint("");
 
   if (elChat) elChat.innerHTML = "";
@@ -1239,9 +1101,8 @@ async function hydrateHistoryCoverFromCache(track, cover, coverBox, renderToken)
   if (renderToken !== historyCoverRenderToken) return;
 
   const existing = historyCoverByKey[key];
-  if (existing === null) return;
   if (typeof existing === "string" && existing) {
-    cover.src = existing;
+    showCoverImage(cover, coverBox, existing);
     return;
   }
 
@@ -1258,7 +1119,7 @@ async function hydrateHistoryCoverFromCache(track, cover, coverBox, renderToken)
       return;
     }
     historyCoverByKey[key] = coverUrl;
-    cover.src = coverUrl;
+    showCoverImage(cover, coverBox, coverUrl);
   } catch {}
 }
 
@@ -1318,22 +1179,9 @@ function renderHistoryList() {
       cover.alt = "";
       cover.decoding = "async";
       cover.loading = "lazy";
+      bindCoverImageState(cover, coverBox);
       const coverUrl = t?.cover ? String(t.cover).trim() : "";
-      if (coverUrl) {
-        cover.src = coverUrl;
-        coverBox.classList.remove("fallback");
-      } else {
-        cover.hidden = true;
-      }
-      cover.addEventListener("load", () => {
-        cover.hidden = false;
-        coverBox.classList.remove("fallback");
-      });
-      cover.addEventListener("error", () => {
-        cover.hidden = true;
-        cover.removeAttribute("src");
-        coverBox.classList.add("fallback");
-      });
+      if (!showCoverImage(cover, coverBox, coverUrl)) resetCoverImage(cover, coverBox);
       coverBox.appendChild(cover);
 
       prefix.appendChild(coverBox);
@@ -1354,19 +1202,6 @@ function renderHistoryList() {
       actions.className = "queueActions";
       const key = getVoteKeyForTrack(t);
       const vote = key ? Number(trackVotes[key] ?? 0) : 0;
-      if (key) {
-        const detailBtn = document.createElement("button");
-        detailBtn.className = "queueVoteBtn";
-        detailBtn.type = "button";
-        detailBtn.setAttribute("aria-label", "详情");
-        detailBtn.innerHTML = `<svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 18l6-6-6-6"/></svg>`;
-        detailBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          void openHistoryDetail(t, stamp);
-        });
-        actions.appendChild(detailBtn);
-      }
       if (key) {
         const likeBtn = document.createElement("button");
         likeBtn.className = `queueVoteBtn${vote === 1 ? " active" : ""}`;
@@ -1418,10 +1253,8 @@ function renderHistoryList() {
         if (!trackName || !trackArtist) return;
         const item = { name: trackName, artist: trackArtist, provider: "cached" };
         const insertAt = queueIndex >= 0 ? Math.min(queueIndex + 1, queue.length) : queue.length;
-        queue.splice(insertAt, 0, item);
-        renderQueue();
         try {
-          await playAt(insertAt);
+          await sendPlayerCommand("player.insertTrackAtAndPlay", { track: item, index: insertAt });
         } catch {}
       });
     });
@@ -1432,6 +1265,7 @@ async function openHistoryDetail(track, stamp) {
   const name = track?.name ? String(track.name).trim() : "";
   const artist = track?.artist ? String(track.artist).trim() : "";
   const raw = track?.raw ? String(track.raw) : "";
+  const key = getVoteKeyForTrack(track);
   if (!name || !artist) return;
 
   historySelectedIndex = -1;
@@ -1441,17 +1275,26 @@ async function openHistoryDetail(track, stamp) {
   if (elHistoryDetailArtist) elHistoryDetailArtist.textContent = artist;
   if (elHistoryDetailRaw) elHistoryDetailRaw.textContent = raw;
 
-  if (elHistoryDetailCover) {
-    elHistoryDetailCover.hidden = true;
-    elHistoryDetailCover.removeAttribute("src");
+  resetCoverImage(elHistoryDetailCover, elHistoryDetailCoverBox);
+
+  const knownCover =
+    (key && typeof historyCoverByKey[key] === "string" && historyCoverByKey[key]) ||
+    (track?.cover ? String(track.cover).trim() : "");
+  if (knownCover) {
+    if (key) historyCoverByKey[key] = knownCover;
+    showCoverImage(elHistoryDetailCover, elHistoryDetailCoverBox, knownCover);
+    return;
   }
-  if (elHistoryDetailCoverBox) elHistoryDetailCoverBox.classList.add("fallback");
 
   try {
     const resp = await chrome.runtime.sendMessage({ type: "getCachedTrack", track: { name, artist } });
     const cover = resp?.ok && resp?.hit && resp?.resolved?.cover ? String(resp.resolved.cover) : "";
-    if (!cover || !elHistoryDetailCover) return;
-    elHistoryDetailCover.src = cover;
+    if (!cover) {
+      if (key) historyCoverByKey[key] = null;
+      return;
+    }
+    if (key) historyCoverByKey[key] = cover;
+    showCoverImage(elHistoryDetailCover, elHistoryDetailCoverBox, cover);
   } catch {}
 }
 
@@ -1578,6 +1421,29 @@ function updateSendState() {
   elSend.setAttribute("aria-label", "发送");
 }
 
+const COMPOSER_INPUT_MAX_HEIGHT = 120;
+function autosizeComposerInput() {
+  if (!elInput) return;
+  const value = String(elInput.value ?? "");
+  const cs = window.getComputedStyle(elInput);
+  const lineHeight = Number.parseFloat(cs.lineHeight) || 20;
+  const paddingTop = Number.parseFloat(cs.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(cs.paddingBottom) || 0;
+  const minHeight = Math.ceil(lineHeight + paddingTop + paddingBottom);
+
+  if (!value) {
+    elInput.style.height = `${minHeight}px`;
+    elInput.style.overflowY = "hidden";
+    return;
+  }
+
+  elInput.style.height = "0px";
+  const fullHeight = elInput.scrollHeight;
+  const clampedHeight = Math.min(COMPOSER_INPUT_MAX_HEIGHT, Math.max(minHeight, fullHeight));
+  elInput.style.height = `${clampedHeight}px`;
+  elInput.style.overflowY = fullHeight > COMPOSER_INPUT_MAX_HEIGHT ? "auto" : "hidden";
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1635,207 +1501,16 @@ async function cropAvatar(file) {
   return await canvasToDataUrl(canvas);
 }
 
-async function resolveTrack(track) {
-  const cachedStreamUrl = (track?.streamUrl || "").replace(/`/g, "").trim();
-  if (cachedStreamUrl) {
-    return {
-      provider: track?.provider || "cached",
-      track: {
-        name: track?.name || "",
-        artist: track?.artist || "",
-      },
-      streamUrl: cachedStreamUrl,
-      cover: track?.cover || "",
-      durationMs: track?.durationMs || 0,
-    };
-  }
-
-  if (typeof window.resolveTrackFromPaojiao === "function") {
-    const res = await window.resolveTrackFromPaojiao(track);
-    if (res?.streamUrl) return res;
-  }
-  const res = await chrome.runtime.sendMessage({ type: "resolveTrack", track });
-  if (!res || !res.streamUrl) {
-    throw new Error("resolve failed");
-  }
-  return res;
-}
-
-async function playAt(i) {
-  const token = ++playRequestToken;
-  const track = queue[i];
-  if (!track) return;
-  queueIndex = i;
-  userPaused = false;
-  seeking = false;
-  setPlayingUI(false);
-  elTrackTitle.textContent = buildTitle(track);
-  updateTimeUI(0, 0);
-  updateProgressUI(0, 0);
-  renderQueue();
-
-  try {
-    activeAudio.pause();
-  } catch {}
-
-  if ("speechSynthesis" in window) {
-    try {
-      window.speechSynthesis.cancel();
-    } catch {}
-  }
-  speechActive = false;
-  speechPaused = false;
-
-  if (isSpeechItem(track)) {
-    clearPreload("speech");
-    resetAudioElement(activeAudio);
-    updateTimeUI(0, 0);
-    updateProgressUI(0, 0);
-    renderQueue();
-    const text = track?.text ? String(track.text).trim() : "";
-    if (!text) {
-      setHint("插播内容为空");
-      safePost({ type: "playbackState", playing: false });
-      return;
-    }
-    speechActive = true;
-    speechPaused = false;
-    setPlayingUI(true);
-    safePost({ type: "playbackState", playing: true });
-    schedulePreloadForNextTrack();
-    refreshVoiceCache();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "zh-CN";
-    const v = pickVoiceById(ttsVoiceId);
-    if (v) u.voice = v;
-    await new Promise((resolve) => {
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      try {
-        window.speechSynthesis.cancel();
-      } catch {}
-      window.speechSynthesis.speak(u);
-    });
-    if (token !== playRequestToken) return;
-    speechActive = false;
-    speechPaused = false;
-    setPlayingUI(false);
-    safePost({ type: "playbackState", playing: false });
-    await playNext();
-    return;
-  }
-
-  if (await activatePreloadedTrack(i)) {
-    return;
-  }
-
-  let resolved;
-  try {
-    resolved = await resolveTrack(track);
-  } catch (e) {
-    console.error("[playAt] resolveTrack failed", e, { track, index: i });
-    if (token === playRequestToken) {
-      setHint("歌曲解析失败，可能是音源不可用或网络问题");
-    }
-    return;
-  }
-
-  if (token !== playRequestToken) return;
-
-  const streamUrl = (resolved?.streamUrl || "").replace(/`/g, "").trim();
-  if (!streamUrl) {
-    console.error("[playAt] no streamUrl! resolved:", resolved);
-    if (token === playRequestToken) {
-      setHint("歌曲解析失败：未找到播放链接");
-    }
-    return;
-  }
-
-  const mergedTrack = mergeResolvedTrack(track, resolved);
-  queue[i] = mergedTrack;
-  elTrackTitle.textContent = buildTitle(mergedTrack);
-  renderQueue();
-
-  clearPreload("manual-play");
-  if (token !== playRequestToken) return;
-
-  activeAudio.src = streamUrl;
-  activeAudio.currentTime = 0;
-  activeAudio.load();
-  try {
-    await activeAudio.play();
-  } catch (e) {
-    console.error("[playAt] audio.play failed", e, { streamUrl, track: mergedTrack });
-    setPlayingUI(false);
-    if (token === playRequestToken) {
-      setHint("播放失败：浏览器拦截或音源不可播放");
-    }
-    return;
-  }
-  if (token !== playRequestToken) return;
-  setPlayingUI(true);
-  safePost({ type: "playbackState", playing: true });
-  schedulePreloadForNextTrack();
+async function playAt(index) {
+  await sendPlayerCommand("player.playAt", { index });
 }
 
 async function playNext() {
-  if (!queue.length) return;
-  const next = Math.min(queueIndex + 1, queue.length - 1);
-  if (next === queueIndex) return;
-  await playAt(next);
+  await sendPlayerCommand("player.next");
 }
 
 async function playPrev() {
-  if (!queue.length) return;
-  const prev = Math.max(queueIndex - 1, 0);
-  if (prev === queueIndex) return;
-  await playAt(prev);
-}
-
-async function requestLyricInterlude(tracks) {
-  const list = Array.isArray(tracks) ? tracks : [];
-  const cleaned = list
-    .map((t) => ({
-      name: String(t?.name || "").trim(),
-      artist: String(t?.artist || "").trim(),
-    }))
-    .filter((t) => t.name && t.artist)
-    .slice(0, 5);
-  if (cleaned.length < 3) return { ok: true, skipped: true, error: "insufficient tracks" };
-
-  const timeoutMs = 12000;
-  const timeoutResp = new Promise((resolve) => {
-    setTimeout(() => resolve({ ok: true, skipped: true, error: "timeout" }), timeoutMs);
-  });
-  try {
-    const resp = await Promise.race([
-      chrome.runtime.sendMessage({ type: "lyricInterlude", tracks: cleaned }),
-      timeoutResp,
-    ]);
-    return resp ?? { ok: true, skipped: true, error: "empty response" };
-  } catch (e) {
-    const message = e?.message ? String(e.message) : String(e);
-    return { ok: false, error: message };
-  }
-}
-
-function speak(text) {
-  if (!text) return;
-  if (!("speechSynthesis" in window)) return;
-  refreshVoiceCache();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "zh-CN";
-  const v = pickVoiceById(ttsVoiceId);
-  if (v) u.voice = v;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
-
-function shouldSpeakSegue() {
-  if (segueSpokenInQueue >= 3) return false;
-  if (queueIndex <= 0) return true;
-  if (segueSpokenInQueue === 0) return true;
-  return Math.random() < 0.35;
+  await sendPlayerCommand("player.prev");
 }
 
 async function handleAssistantResult(result) {
@@ -1866,11 +1541,10 @@ async function handleAssistantResult(result) {
   if (hasTracks) {
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
-    const isFreshSession = queueIndex === -1 && queue.length === 0;
+    const isFreshSession = queueIndex === -1 && queue.length === 0 && !currentTrack;
     if (isFreshSession) {
       setHint(`已推荐 ${result.play.length} 首歌曲，正在开始播放`);
       segueSpokenInQueue = 0;
-      resetLyricSegment();
       const nextItems = [];
       const segueText = result.segue ? String(result.segue).trim() : "";
       if (segueText) {
@@ -1884,9 +1558,7 @@ async function handleAssistantResult(result) {
           provider: t?.provider || "pending",
         }))
       );
-      queue = queue.concat(nextItems);
-      renderQueue();
-      await playAt(0);
+      await sendPlayerCommand("player.replaceQueueAndPlay", { queue: nextItems, startIndex: 0 });
     } else {
       showRecommendPush(result.play, result.segue);
     }
@@ -1938,26 +1610,14 @@ port.onMessage.addListener(async (msg) => {
     }
     return;
   }
-  if (msg.type === "interruptStart") {
-    if (!activeAudio.paused) {
-      interrupted = true;
-      elInterruptHint.hidden = false;
-      await activeAudio.pause();
-      setPlayingUI(false);
-      safePost({ type: "playbackState", playing: false });
-    }
+  if (msg.type === "player.state") {
+    applyPlayerState(msg.state);
     return;
   }
-  if (msg.type === "interruptEnd") {
-    elInterruptHint.hidden = true;
-    if (interrupted && !userPaused) {
-      interrupted = false;
-      try {
-        await activeAudio.play();
-        setPlayingUI(true);
-        safePost({ type: "playbackState", playing: true });
-      } catch {}
-    }
+  if (msg.type === "player.error") {
+    const context = msg.context ? ` (${msg.context})` : "";
+    const message = msg.error ? String(msg.error) : "未知错误";
+    setHint(`播放异常${context}：${message}`);
     return;
   }
 });
@@ -1976,6 +1636,7 @@ elSend.addEventListener("click", async () => {
   const text = elInput.value.trim();
   if (!text) return;
   elInput.value = "";
+  autosizeComposerInput();
   updateSendState();
   appendMessage("user", text);
   lastChatText = text;
@@ -2006,7 +1667,16 @@ elInput.addEventListener("keydown", async (e) => {
 });
 
 elInput.addEventListener("input", () => {
+  autosizeComposerInput();
   updateSendState();
+});
+
+window.addEventListener("focus", () => {
+  autosizeComposerInput();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) autosizeComposerInput();
 });
 
 elAvatarBtn.addEventListener("click", () => {
@@ -2043,168 +1713,15 @@ window.addEventListener("click", (e) => {
 });
 
 elBtnPlay.addEventListener("click", async () => {
-  if (speechActive && "speechSynthesis" in window) {
-    if (speechPaused) {
-      speechPaused = false;
-      try {
-        window.speechSynthesis.resume();
-      } catch {}
-      setPlayingUI(true);
-      safePost({ type: "playbackState", playing: true });
-    } else {
-      speechPaused = true;
-      try {
-        window.speechSynthesis.pause();
-      } catch {}
-      setPlayingUI(false);
-      safePost({ type: "playbackState", playing: false });
-    }
-    return;
-  }
-  if (!activeAudio.src) {
-    if (queue.length) await playAt(Math.max(queueIndex, 0));
-    return;
-  }
-  if (activeAudio.paused) {
-    userPaused = false;
-    try {
-      await activeAudio.play();
-      setPlayingUI(true);
-      safePost({ type: "playbackState", playing: true });
-    } catch {}
-  } else {
-    userPaused = true;
-    await activeAudio.pause();
-    setPlayingUI(false);
-    safePost({ type: "playbackState", playing: false });
-  }
+  if (playerPlaying) await sendPlayerCommand("player.pause");
+  else await sendPlayerCommand("player.play");
 });
 
 elBtnNext.addEventListener("click", playNext);
 elBtnPrev.addEventListener("click", playPrev);
 
-function bindAudioEvents(audio, label) {
-  audio.addEventListener("play", () => {
-    if (audio !== activeAudio) return;
-    setPlayingUI(true);
-    safePost({ type: "playbackState", playing: true });
-  });
-
-  audio.addEventListener("pause", () => {
-    if (audio !== activeAudio) return;
-    setPlayingUI(false);
-    safePost({ type: "playbackState", playing: false });
-  });
-
-  audio.addEventListener("loadedmetadata", () => {
-    console.log(`[audio:${label}] loadedmetadata`, getAudioDebugInfo(audio));
-    if (audio !== activeAudio) return;
-    updateTimeUI(audio.currentTime, audio.duration);
-    if (!seeking) updateProgressUI(audio.currentTime, audio.duration);
-  });
-
-  audio.addEventListener("loadstart", () => {
-    console.log(`[audio:${label}] loadstart`, getAudioDebugInfo(audio));
-  });
-
-  audio.addEventListener("canplay", () => {
-    console.log(`[audio:${label}] canplay`, getAudioDebugInfo(audio));
-    if (audio === preloadAudio && preloadStatus === "loading") {
-      preloadStatus = "ready";
-      console.log("[preload] ready", { index: preloadIndex, audio: getAudioDebugInfo(audio) });
-    }
-  });
-
-  audio.addEventListener("canplaythrough", () => {
-    console.log(`[audio:${label}] canplaythrough`, getAudioDebugInfo(audio));
-  });
-
-  audio.addEventListener("durationchange", () => {
-    if (audio !== activeAudio) return;
-    updateTimeUI(audio.currentTime, audio.duration);
-    if (!seeking) updateProgressUI(audio.currentTime, audio.duration);
-  });
-
-  audio.addEventListener("timeupdate", () => {
-    if (audio !== activeAudio) return;
-    updateTimeUI(audio.currentTime, audio.duration);
-    if (!seeking) updateProgressUI(audio.currentTime, audio.duration);
-  });
-
-  audio.addEventListener("ended", async () => {
-    if (audio !== activeAudio) return;
-    const stableToken = playRequestToken;
-    const finishedIndex = queueIndex;
-    const finished = queue[finishedIndex];
-    if (segmentTarget <= 0) resetLyricSegment();
-    if (finished && !isSpeechItem(finished)) {
-      const name = String(finished?.name || "").trim();
-      const artist = String(finished?.artist || "").trim();
-      if (name && artist) {
-        segmentTracks.push({ name, artist });
-      }
-      if (!interludeInFlight && segmentTracks.length >= segmentTarget) {
-        interludeInFlight = true;
-        setHint("正在生成歌词情绪解读…");
-        const snapshot = segmentTracks.slice(0, 5);
-        const resp = await requestLyricInterlude(snapshot);
-        if (stableToken !== playRequestToken) return;
-        const text = resp?.ok && resp?.result?.text ? String(resp.result.text).trim() : "";
-        if (text && !resp?.skipped) {
-          const item = buildInterludeItem(text, snapshot);
-          queue.splice(finishedIndex + 1, 0, item);
-          renderQueue();
-          appendMessage("assistant", text);
-          setHint("已插入一段歌词情绪解读");
-        }
-        resetLyricSegment();
-      }
-    }
-    await playNext();
-  });
-
-  audio.addEventListener("stalled", () => {
-    console.warn(`[audio:${label}] stalled`, getAudioDebugInfo(audio));
-  });
-
-  audio.addEventListener("suspend", () => {
-    console.warn(`[audio:${label}] suspend`, getAudioDebugInfo(audio));
-  });
-
-  audio.addEventListener("abort", () => {
-    console.warn(`[audio:${label}] abort`, getAudioDebugInfo(audio));
-  });
-
-  audio.addEventListener("error", () => {
-    if (audio === preloadAudio) {
-      console.warn("[preload] audio error", {
-        index: preloadIndex,
-        code: audio.error?.code ?? null,
-        message: audio.error?.message ?? "",
-        audio: getAudioDebugInfo(audio),
-      });
-      preloadIndex = -1;
-      preloadStatus = "error";
-      return;
-    }
-
-    const mediaError = audio.error;
-    console.error("[audio] playback error", {
-      code: mediaError?.code ?? null,
-      message: mediaError?.message ?? "",
-      ...getAudioDebugInfo(audio),
-      queueIndex,
-      track: queue[queueIndex] || null,
-    });
-    setPlayingUI(false);
-  });
-}
-
-bindAudioEvents(audioA, "A");
-bindAudioEvents(audioB, "B");
-
 elProgress.addEventListener("input", () => {
-  const duration = activeAudio.duration;
+  const duration = playerDuration;
   if (!Number.isFinite(duration) || duration <= 0) return;
   seeking = true;
   const ratio = Number(elProgress.value) / 1000;
@@ -2213,10 +1730,10 @@ elProgress.addEventListener("input", () => {
 });
 
 elProgress.addEventListener("change", () => {
-  const duration = activeAudio.duration;
+  const duration = playerDuration;
   if (!Number.isFinite(duration) || duration <= 0) return;
   const ratio = Number(elProgress.value) / 1000;
-  activeAudio.currentTime = ratio * duration;
+  void sendPlayerCommand("player.seek", { time: ratio * duration });
   seeking = false;
 });
 
@@ -2245,6 +1762,7 @@ elBtnMic.addEventListener("click", async () => {
       if (!finalText) return;
       const prev = (elInput.value ?? "").replace(/\s+$/g, "");
       elInput.value = `${prev}${prev ? " " : ""}${finalText}`;
+      autosizeComposerInput();
       updateSendState();
       elInput.focus();
     });
@@ -2398,6 +1916,7 @@ if (elTtsVoiceSelect) {
     ttsVoiceId = next;
     try {
       await patchPreferences({ ttsVoiceId: next });
+      await sendPlayerCommand("player.setPreferences", { preferences: { ttsVoiceId: next } });
       setHint("已保存口播音色");
     } catch (e) {
       const message = e?.message ? String(e.message) : String(e);
@@ -2483,6 +2002,7 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+autosizeComposerInput();
 updateSendState();
 safePost({ type: "ready" });
 
@@ -2499,6 +2019,7 @@ safePost({ type: "ready" });
   } else {
     await clearSavedSession();
   }
+  await requestPlayerState();
   if ("speechSynthesis" in window) {
     refreshVoiceCache();
     try {

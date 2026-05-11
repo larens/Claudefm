@@ -1,11 +1,10 @@
-# Claudefm Chrome Extension
+# Claudefm Music Assistant
 
 English · [中文](./README.md)
 
 Claudefm is a Chromium Side Panel extension that turns chat, playlist recommendations, and autoplay into a local-first DJ-style music assistant.
 
 - Chat and recommendations: via Native Messaging to your local Claude Code CLI
-- Audio source resolution: controlled Web Provider, currently `https://music.pjmp3.com/*`
 - Local data: stored by the host on disk, while extension state stays in `chrome.storage.local`
 
 ## Repo Layout
@@ -63,7 +62,20 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 
 ### 2. Configure The Installer
 
-Edit the platform-specific config file:
+You can also pass values through CLI arguments:
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
+```
+
+Advanced examples:
+
+```bash
+node host/install.mjs --config host/install-linux.json
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+```
+
+You can also edit the platform-specific config file:
 
 - macOS: `host/install-macos.json`
 - Linux: `host/install-linux.json`
@@ -85,19 +97,6 @@ Optional fields:
   "dataDir": "/absolute/path/to/Claudefm-data",
   "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
 }
-```
-
-You can also pass values through CLI arguments:
-
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
-
-Advanced examples:
-
-```bash
-node host/install.mjs --config host/install-linux.json
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
 ```
 
 ### 3. Install The Native Host And Generate Init Files

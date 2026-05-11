@@ -62,7 +62,20 @@ Claudefm 是一个 Chromium Side Panel 扩展，把“DJ 对话 + 歌单推荐 +
 
 ### 2. 配置安装文件
 
-按平台编辑对应配置文件：
+可以直接命令行传参：
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
+```
+
+高级用法：
+
+```bash
+node host/install.mjs --config host/install-linux.json
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+```
+
+也可以按平台编辑对应配置文件：
 
 - macOS：`host/install-macos.json`
 - Linux：`host/install-linux.json`
@@ -84,19 +97,6 @@ Claudefm 是一个 Chromium Side Panel 扩展，把“DJ 对话 + 歌单推荐 +
   "dataDir": "/absolute/path/to/Claudefm-data",
   "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
 }
-```
-
-也可以直接命令行传参：
-
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
-
-高级用法：
-
-```bash
-node host/install.mjs --config host/install-linux.json
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
 ```
 
 ### 3. 安装 Native Host 并生成初始化文件

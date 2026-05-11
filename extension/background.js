@@ -8,6 +8,22 @@ let providerTabId = null;
 let externalInterruptActive = false;
 let welcomeInFlight = false;
 let autoRecommendDone = false;
+let creatingOffscreen = null;
+let playerStateCache = {
+  queue: [],
+  queueIndex: -1,
+  currentTrack: null,
+  playing: false,
+  currentTime: 0,
+  duration: 0,
+  interrupted: false,
+  userPaused: false,
+  speechActive: false,
+  speechPaused: false,
+  preloadIndex: -1,
+  preloadStatus: "idle",
+  lastUpdatedAt: 0,
+};
 
 async function getPreferences() {
   const { preferences } = await chrome.storage.local.get("preferences");
@@ -38,6 +54,48 @@ function broadcast(msg) {
       p.postMessage(msg);
     } catch {}
   });
+}
+
+async function hasOffscreenDocument(pathname = "offscreen.html") {
+  const offscreenUrl = chrome.runtime.getURL(pathname);
+  if (typeof chrome.runtime.getContexts === "function") {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [offscreenUrl],
+    });
+    return contexts.length > 0;
+  }
+  const matchedClients = await self.clients.matchAll();
+  return matchedClients.some((client) => client.url === offscreenUrl);
+}
+
+async function ensureOffscreenDocument() {
+  if (await hasOffscreenDocument()) return;
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["WORKERS"],
+      justification: "Keep the hidden playback runtime alive outside the side panel lifecycle.",
+    });
+  }
+  try {
+    await creatingOffscreen;
+  } finally {
+    creatingOffscreen = null;
+  }
+}
+
+async function sendOffscreenCommand(command, payload = {}) {
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    command,
+    ...payload,
+  });
+  if (response?.ok && response.state) {
+    playerStateCache = response.state;
+  }
+  return response;
 }
 
 function sendNative(payload) {
@@ -660,10 +718,14 @@ async function updateExternalAudioState() {
 
   if (active && !externalInterruptActive) {
     externalInterruptActive = true;
-    broadcast({ type: "interruptStart" });
+    try {
+      await sendOffscreenCommand("player.interruptStart");
+    } catch {}
   } else if (!active && externalInterruptActive) {
     externalInterruptActive = false;
-    broadcast({ type: "interruptEnd" });
+    try {
+      await sendOffscreenCommand("player.interruptEnd");
+    } catch {}
   }
 }
 
@@ -676,6 +738,10 @@ chrome.runtime.onConnect.addListener(async (port) => {
   port.onMessage.addListener((msg) => {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "ready") {
+      void ensureOffscreenDocument();
+      try {
+        port.postMessage({ type: "player.state", state: playerStateCache, reason: "connect" });
+      } catch {}
       void maybeWelcome(port);
       return;
     }
@@ -695,6 +761,59 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (!msg || typeof msg !== "object") {
         sendResponse({ ok: false, error: "invalid message" });
+        return;
+      }
+      if (msg.target === "offscreen") {
+        return;
+      }
+      if (msg.type === "player.stateBroadcast") {
+        playerStateCache = msg.state && typeof msg.state === "object" ? msg.state : playerStateCache;
+        try {
+          await chrome.storage.local.set({ [msg.cacheKey || "playerStateCacheV1"]: playerStateCache });
+        } catch {}
+        broadcast({ type: "player.state", state: playerStateCache, reason: msg.reason || "" });
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "player.errorBroadcast") {
+        broadcast({ type: "player.error", error: msg.error || "", context: msg.context || "" });
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.type === "player.getPreferences") {
+        const prefs = await getPreferences();
+        sendResponse({
+          ok: true,
+          prefs: {
+            ttsVoiceId: String(prefs.ttsVoiceId || "").trim(),
+          },
+        });
+        return;
+      }
+      if (msg.type === "player.getState") {
+        try {
+          const res = await sendOffscreenCommand("player.getState");
+          if (res?.ok && res.state) {
+            playerStateCache = res.state;
+          }
+        } catch {}
+        sendResponse({ ok: true, state: playerStateCache });
+        return;
+      }
+      if (
+        msg.type === "player.playAt" ||
+        msg.type === "player.play" ||
+        msg.type === "player.pause" ||
+        msg.type === "player.next" ||
+        msg.type === "player.prev" ||
+        msg.type === "player.seek" ||
+        msg.type === "player.replaceQueueAndPlay" ||
+        msg.type === "player.insertTrackAtAndPlay" ||
+        msg.type === "player.reset" ||
+        msg.type === "player.setPreferences"
+      ) {
+        const res = await sendOffscreenCommand(msg.type, msg);
+        sendResponse(res || { ok: false, error: "offscreen unavailable" });
         return;
       }
       if (msg.type === "chat") {
