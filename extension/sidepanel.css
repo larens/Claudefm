@@ -601,6 +601,11 @@ button:hover {
   opacity: 0.75;
 }
 
+.app.overlay-active .msg.assistant.pending,
+.app.overlay-active .recommendCard {
+  display: none;
+}
+
 .startPlayBtn {
   width: 100%;
   border-radius: 12px;

@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 set "DIR=%~dp0"
-set "LOG_FILE=%TEMP%\ClaudiofmHost.log"
+set "LOG_FILE=%TEMP%\ClaudefmHost.log"
 
 if "%CLAUDE_BIN%"=="" (
   for %%I in (claude.exe claude.cmd claude.bat claude) do (
@@ -42,7 +42,7 @@ if "%NODE_BIN%"=="" (
 :node_found
 
 if "%NODE_BIN%"=="" (
-  echo ClaudiofmHost: node not found. Please install Node.js (>=18) and retry. 1>&2
+  echo ClaudefmHost: node not found. Please install Node.js (>=18) and retry. 1>&2
   exit /b 127
 )
 

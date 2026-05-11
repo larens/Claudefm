@@ -1,3 +1,0 @@
-#!/usr/bin/env node
-const { spawn } = require("child_process");
-const child = spawn("/Users/lairuisi/workspace/Claudiofm/claudiofm-chrome-extension/host/ClaudiofmHostNative", [], { stdio: "inherit" });

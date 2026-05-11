@@ -1,117 +1,175 @@
-# Claudiofm Chrome Extension
+# Claudefm Music Assistant
 
 中文 · [English](./README.en.md)
 
-Claudiofm 的 Chrome 侧栏插件版本（MV3 Side Panel）：把“DJ 对话 + 歌单推荐 + 自动播放”做成一个本地优先的 Side Panel。
+Claudefm 是一个 Chromium Side Panel 扩展，把“DJ 对话 + 歌单推荐 + 自动播放”做成一个本地优先的音乐助手。
 
-- 对话/推荐：通过 Native Messaging 调用本机 Claude Code CLI（`claude --bare ...`）
-- 音源解析：受控 Web Provider（当前使用 `https://music.pjmp3.com/*`）
-- 数据与偏好：本地落盘 + `chrome.storage.local`（云同步计划中）
+- 对话与推荐：通过 Native Messaging 调用本机 Claude Code CLI
+- 本地数据：Host 落盘到本机目录，扩展状态保存在 `chrome.storage.local`
 
-## 目录
+## 仓库结构
 
-- `extension/`：Chrome 扩展（Side Panel UI + background service worker）
-- `host/`：Native Messaging Host（macOS，优先 Python，回退 Node）
-- `docs/`：开发资料与模板
+- `extension/`：Chrome 扩展与 Side Panel UI
+- `host/`：Native Messaging Host、安装脚本、平台配置模板
+- `docs/`：模板与设计文档
 
-## 功能特性（当前版本）
+## 功能概览
 
-- 对话区即时反馈：发送后立即展示“正在思考…”，收到回复后自动替换
-- 语义推荐策略：不是每次都推荐歌单；模型会先确认“是否需要推荐”
-- DJ 推送新歌单：推荐歌单返回后，支持编辑 DJ 推荐语，再一键“推送并播放”
-- 新会话首个歌单：在空队列状态下，DJ 推荐歌单会直接进入队列并自动开始播放
-- 点赞/踩闭环：在当前歌单与历史列表中可标记 like/dislike，并影响后续推荐与过滤
-- 历史与详情：读取 `~/Documents/Claudiofm/list.md`（最近 7 天），支持封面缓存命中渲染
-- 本地缓存：Host 会把歌曲与封面缓存到 `~/Documents/Claudiofm/cache/`，优先命中提升速度
-- TTS 与插播：支持选择朗读音色；可生成“歌词情绪解读”插播段落
-- Soul 面板与场景：读取本地记忆文件，必要时请求定位辅助场景推荐
+- 即时对话反馈，支持按语义确认是否真的要推荐歌单
+- DJ 推荐语编辑、推送并自动播放
+- 点赞/踩闭环，影响后续推荐与过滤
+- 历史歌单读取与详情查看
+- 本地缓存歌曲与封面
+- TTS 音色选择与歌词情绪插播
+- Soul 面板读取本地音乐记忆文件
 
-## 工作原理（架构）
+## 架构
 
-```
-┌──────────────┐      Native Messaging      ┌────────────────────────┐
-│ Side Panel UI │  ───────────────────────▶ │  Claudiofm Host (macOS) │
-│ (extension/)  │                           │  host.py / host.cjs     │
-└──────┬───────┘                           └───────────┬────────────┘
+```text
+┌──────────────┐      Native Messaging      ┌─────────────────────────────┐
+│ Side Panel UI│  ───────────────────────▶ │ Claudefm Host              │
+│ extension/   │                           │ host.py / host.cjs          │
+└──────┬───────┘                           └───────────┬─────────────────┘
        │                                              │
-       │  chrome.runtime.sendMessage / port            │  claude --bare
-       │                                              │  + 本地缓存/文件
+       │ chrome.runtime.sendMessage / port            │ claude --bare
+       │                                              │ + local files/cache
 ┌──────▼────────────────────┐                          │
-│ Background Service Worker  │                          │
-│ (extension/background.js)  │                          │
+│ Background Service Worker │                          │
+│ extension/background.js   │                          │
 └──────────┬─────────────────┘                          │
            │                                            │
            │ Provider Tab / Fetch                        │
            ▼                                            ▼
-      https://music.pjmp3.com/*                    ~/Documents/Claudiofm/
+      https://music.pjmp3.com/*                  Claudefm data dir
 ```
 
-## 快速开始（macOS / Linux / Windows）
+## 快速开始
 
 ### 前置条件
 
-- Chrome/Edge/Brave/Arc（支持 Side Panel 的 Chromium 内核浏览器）
-- Node.js ≥ 18（用于安装 Host；运行时可选）
-- Python 3（可选；存在则优先使用 `host.py`）
-- Claude Code CLI 可用（命令 `claude` 在 PATH 中；或通过环境变量 `CLAUDE_BIN` 指定）
+- Chrome / Edge / Brave / Arc / Chromium 等 Chromium 浏览器
+- Node.js `>=18`
+- Python 3（可选；存在时优先使用 `host.py`）
+- Claude Code CLI 可执行，命令为 `claude`
 
-### 1) 加载扩展
+### 1. 加载扩展
 
 1. 打开 `chrome://extensions`
 2. 开启开发者模式
-3. Load unpacked 选择本仓库的 `extension/`
-4. 复制扩展 ID（extensionId）
+3. 选择 `Load unpacked`
+4. 选择仓库中的 `extension/`
+5. 复制扩展 ID
 
-### 2) 配置并安装 Native Host
+### 2. 配置安装文件
 
-编辑 `host/install-macos.json`：
+按平台编辑对应配置文件：
+
+- macOS：`host/install-macos.json`
+- Linux：`host/install-linux.json`
+- Windows：`host/install-windows.json`
+
+最小配置示例：
 
 ```json
 {
-  "extensionId": "你的扩展ID（chrome-extension://...）"
+  "extensionId": "YOUR_EXTENSION_ID"
 }
 ```
 
-安装（跨平台安装脚本：macOS/Linux 写入 `NativeMessagingHosts`；Windows 写入注册表；默认 Host 入口为 `host/claudiofm-host.sh` 或 `host/claudiofm-host.cmd`）：
+可选字段：
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID",
+  "dataDir": "/absolute/path/to/Claudefm-data",
+  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
+}
+```
+
+也可以直接命令行传参：
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
+```
+
+高级用法：
+
+```bash
+node host/install.mjs --config host/install-linux.json
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+```
+
+### 3. 安装 Native Host 并生成初始化文件
 
 ```bash
 cd host
 node install.mjs
 ```
 
-可选：不改 JSON，直接命令行传参：
+安装脚本会同时完成这些事情：
 
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
+- 安装 Native Messaging manifest
+- 写入运行期配置快照 `host/runtime-config.json`
+- 创建本地数据目录
+- 生成 `music.md`
+- 生成 `list.md`
+- 创建 `cache/`、`cache/tracks/`、`cache/covers/`
 
-### 3) 打开侧栏
+### 4. 打开侧栏
 
-点击扩展图标，打开 Side panel → Claudiofm。
+点击扩展图标，打开 Side Panel → Claudefm。
 
-## 常见问题（Troubleshooting）
+## 默认本地数据目录
 
-- Host 未授权/forbidden：
-  - 确认 `host/install-macos.json` 的 `extensionId` 与 `chrome://extensions` 一致
-  - 重新执行 `node host/install.mjs`
-  - 完全退出并重启浏览器
-- 找不到 `claude`：
-  - 确认 Claude Code CLI 已安装且命令可用
-  - 或设置环境变量 `CLAUDE_BIN` 指向 claude 可执行文件路径
-- Host 日志：
-  - `~/Library/Logs/ClaudiofmHost.log`
+- macOS：`~/Documents/Claudefm`
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/Claudefm`
+- Windows：`%APPDATA%\Claudefm`
 
-## 发布历史（摘要）
+目录内容通常包括：
 
-近期主线变更（按提交摘要归纳）：
+- `music.md`：用户音乐记忆画像
+- `list.md`：历史歌单记录
+- `cache/`：歌曲与封面缓存
 
-- `a9ed009`：历史封面缓存命中渲染 + 点赞/踩 UI & 推荐过滤联动
-- `45d2f2d`：修复非音乐对话也能正常返回大模型回复
-- `c44e82d`：优先使用模型 TTS，失败回退浏览器 TTS
-- `2ce151a`：音色选择与歌词插播（lyric interlude）
-- `c85b03a`：历史歌单导入与 Soul 面板
-- `f36d301`：修复 macOS Host 安装路径与 Claude CLI 超时处理
+## 平台说明
+
+### macOS
+
+- 安装配置：`host/install-macos.json`
+- 日志：`~/Library/Logs/ClaudefmHost.log`
+- Native Messaging Hosts：位于各 Chromium 浏览器的 `Library/Application Support/.../NativeMessagingHosts`
+
+### Linux
+
+- 安装配置：`host/install-linux.json`
+- 日志：`${XDG_STATE_HOME:-~/.local/state}/Claudefm/ClaudefmHost.log`
+- Native Messaging Hosts：位于各浏览器的 `~/.config/.../NativeMessagingHosts`
+
+### Windows
+
+- 安装配置：`host/install-windows.json`
+- 日志：`%TEMP%\ClaudefmHost.log`
+- Native Messaging：安装脚本会写入当前用户注册表 `HKCU\Software\...\NativeMessagingHosts`
+
+## Troubleshooting
+
+- `forbidden` / `Not allowed`
+- 确认配置文件中的 `extensionId` 与 `chrome://extensions` 中显示的一致
+- 重新执行 `node host/install.mjs`
+- 完全退出并重启浏览器
+
+- 找不到 `claude`
+- 确认 Claude Code CLI 已安装，且 `claude` 在 `PATH` 中
+- 或设置环境变量 `CLAUDE_BIN` 指向可执行文件绝对路径
+
+- 想自定义数据目录
+- 在安装配置里设置 `dataDir`
+- 或执行安装命令时传 `--dataDir`
+
+- 删除过本地文件后如何恢复
+- 重新执行 `node host/install.mjs`
+- Host 运行时也会对缺失的核心文件做兜底创建
 
 ## License
 
-尚未在仓库中声明许可证（如需开源发布，建议补充 LICENSE 并在 README 中明确）。
+仓库目前未声明许可证；如需对外发布，建议补充 `LICENSE` 文件。

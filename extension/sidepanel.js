@@ -15,6 +15,7 @@ function safePost(msg) {
   }
 }
 
+const elApp = document.querySelector(".app");
 const elChat = document.getElementById("chat");
 const elInput = document.getElementById("input");
 const elSend = document.getElementById("send");
@@ -891,20 +892,32 @@ function refreshSettingsDjNameUI() {
   elSettingsDjNameInput.value = djName;
 }
 
+function refreshOverlayTransientUiState() {
+  if (!elApp) return;
+  const overlayActive =
+    (elSoulPanel && !elSoulPanel.hidden) ||
+    (elHistoryPanel && !elHistoryPanel.hidden) ||
+    (elSettingsPanel && !elSettingsPanel.hidden);
+  elApp.classList.toggle("overlay-active", Boolean(overlayActive));
+}
+
 function openSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = false;
+  refreshOverlayTransientUiState();
   setSoulStatus("正在读取…");
 }
 
 function closeSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = true;
+  refreshOverlayTransientUiState();
 }
 
 function openSettingsPanel() {
   if (!elSettingsPanel) return;
   elSettingsPanel.hidden = false;
+  refreshOverlayTransientUiState();
   refreshSettingsDjNameUI();
   void refreshTtsSettingsUI();
 }
@@ -912,6 +925,7 @@ function openSettingsPanel() {
 function closeSettingsPanel() {
   if (!elSettingsPanel) return;
   elSettingsPanel.hidden = true;
+  refreshOverlayTransientUiState();
 }
 
 function describeVoice(v) {
@@ -995,7 +1009,7 @@ async function refreshTtsSettingsUI() {
 }
 
 async function refreshSoulFromFile() {
-  setSoulStatus("正在读取 ~/Documents/Claudiofm/music.md …");
+  setSoulStatus("正在读取 music.md …");
   try {
     const resp = await chrome.runtime.sendMessage({ type: "readMemoryFile" });
     if (!resp?.ok) {
@@ -1005,7 +1019,7 @@ async function refreshSoulFromFile() {
     }
     const content = resp?.content ? String(resp.content) : "";
     if (elSoulContent) elSoulContent.textContent = content && content.trim() ? content.trim() : "(空)";
-    setSoulStatus(`已加载：${resp.path || "~/Documents/Claudiofm/music.md"}`);
+    setSoulStatus(`已加载：${resp.path || "music.md"}`);
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     setSoulStatus(`读取失败：${message}`);
@@ -1444,6 +1458,7 @@ async function openHistoryDetail(track, stamp) {
 function openHistoryPanel() {
   if (!elHistoryPanel) return;
   elHistoryPanel.hidden = false;
+  refreshOverlayTransientUiState();
   setHistoryView("list");
   setHistoryStatus("正在读取…");
 }
@@ -1451,10 +1466,11 @@ function openHistoryPanel() {
 function closeHistoryPanel() {
   if (!elHistoryPanel) return;
   elHistoryPanel.hidden = true;
+  refreshOverlayTransientUiState();
 }
 
 async function refreshHistoryFromFile() {
-  setHistoryStatus("正在读取 ~/Documents/Claudiofm/list.md …");
+  setHistoryStatus("正在读取 list.md …");
   try {
     const resp = await chrome.runtime.sendMessage({ type: "readListFile" });
     if (!resp?.ok) {
@@ -1477,7 +1493,7 @@ async function refreshHistoryFromFile() {
     });
     renderHistoryList();
     setHistoryView("list");
-    setHistoryStatus(`已加载：${historyPath || "~/Documents/Claudiofm/list.md"}（最近 7 天）`);
+    setHistoryStatus(`已加载：${historyPath || "list.md"}（最近 7 天）`);
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     setHistoryStatus(`读取失败：${message}`);

@@ -2,11 +2,11 @@
 
 ## Background
 
-Claudiofm already has a cross-platform native host installer entry at `host/install.mjs`, but the repository and runtime behavior still lean toward macOS assumptions:
+Claudefm already has a cross-platform native host installer entry at `host/install.mjs`, but the repository and runtime behavior still lean toward macOS assumptions:
 
 - README text and examples are centered on macOS.
 - The installer only reads `host/install-macos.json`.
-- Runtime data paths are still hard-coded around `~/Documents/Claudiofm` in multiple places.
+- Runtime data paths are still hard-coded around `~/Documents/Claudefm` in multiple places.
 - Some initialization is done lazily during runtime, while some installation details are done up front.
 
 The goal of this change is to keep the existing macOS experience working, while making Linux and Windows first-class supported targets in both documentation and initialization behavior.
@@ -60,9 +60,9 @@ The first browser-side interaction should not need to create core files unless t
 
 Default runtime data root will be:
 
-- macOS: `~/Documents/Claudiofm`
-- Linux: `$XDG_DATA_HOME/Claudiofm`, fallback `~/.local/share/Claudiofm`
-- Windows: `%APPDATA%\Claudiofm`
+- macOS: `~/Documents/Claudefm`
+- Linux: `$XDG_DATA_HOME/Claudefm`, fallback `~/.local/share/Claudefm`
+- Windows: `%APPDATA%\Claudefm`
 
 This keeps macOS behavior unchanged while making Linux and Windows follow their native conventions.
 
@@ -70,7 +70,7 @@ This keeps macOS behavior unchanged while making Linux and Windows follow their 
 
 The design will support an optional override for advanced users:
 
-- environment variable: `CLAUDIOFM_DATA_DIR`
+- environment variable: `CLAUDEFM_DATA_DIR`
 - install config field: `dataDir`
 - install CLI arg: `--dataDir <absolute-path>`
 
@@ -102,8 +102,8 @@ Optional but recommended:
 - `host/install.mjs`
 - `host/host.js`
 - `host/host.py`
-- `host/claudiofm-host.sh`
-- `host/claudiofm-host.cmd`
+- `host/claudefm-host.sh`
+- `host/claudefm-host.cmd`
 
 ## Config Design
 
@@ -192,7 +192,7 @@ The installer should end with a readable summary such as:
 
 Both `host/host.js` and `host/host.py` need a single logical concept:
 
-- `getClaudiofmDataDir()`
+- `getClaudefmDataDir()`
 
 Each runtime implementation will resolve the data directory using the same precedence described above, with identical defaults per platform.
 
@@ -209,9 +209,9 @@ Helpers should then derive:
 
 Current logging is macOS-centric. Logging should become:
 
-- macOS: `~/Library/Logs/ClaudiofmHost.log`
-- Linux: `${XDG_STATE_HOME:-~/.local/state}/Claudiofm/ClaudiofmHost.log`
-- Windows: `%TEMP%\ClaudiofmHost.log`
+- macOS: `~/Library/Logs/ClaudefmHost.log`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/Claudefm/ClaudefmHost.log`
+- Windows: `%TEMP%\ClaudefmHost.log`
 
 Shell launchers should resolve log file locations consistently with the active platform.
 
@@ -219,7 +219,7 @@ Shell launchers should resolve log file locations consistently with the active p
 
 ### macOS
 
-- Preserve current default data location: `~/Documents/Claudiofm`
+- Preserve current default data location: `~/Documents/Claudefm`
 - Preserve current launcher behavior and install command
 - Preserve current `install-macos.json` support
 
@@ -320,7 +320,7 @@ The troubleshooting section should list per-platform manifest and log locations.
 - Repository docs clearly describe all three platforms.
 - Platform-specific install config templates exist for macOS, Linux, and Windows.
 - Installer creates required runtime directories and baseline files during installation.
-- Runtime code no longer hard-codes `~/Documents/Claudiofm` for Linux and Windows.
+- Runtime code no longer hard-codes `~/Documents/Claudefm` for Linux and Windows.
 - macOS keeps its current default data path and remains backward-compatible.
 
 ## Implementation Notes

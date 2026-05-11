@@ -9,9 +9,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
-    const a = String(argv[i] || "");
-    if (!a.startsWith("--")) continue;
-    const key = a.slice(2);
+    const current = String(argv[i] || "");
+    if (!current.startsWith("--")) continue;
+    const key = current.slice(2);
     const next = argv[i + 1];
     if (next != null && !String(next).startsWith("--")) {
       out[key] = String(next);
@@ -23,71 +23,161 @@ function parseArgs(argv) {
   return out;
 }
 
-function readConfig() {
-  const configPath = path.resolve(__dirname, "install-macos.json");
-  let raw = "";
+function getPlatformConfigName(platform) {
+  if (platform === "darwin") return "install-macos.json";
+  if (platform === "win32") return "install-windows.json";
+  return "install-linux.json";
+}
+
+function readJsonFile(filePath) {
   try {
-    raw = fs.readFileSync(configPath, "utf8");
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
-    raw = "{}";
+    return null;
   }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
+}
+
+function resolveConfig(platform, args) {
+  const candidates = [];
+  if (args.config) candidates.push(path.resolve(process.cwd(), String(args.config)));
+  candidates.push(path.resolve(__dirname, getPlatformConfigName(platform)));
+  candidates.push(path.resolve(__dirname, "install-macos.json"));
+  for (const filePath of candidates) {
+    const parsed = readJsonFile(filePath);
+    if (parsed && typeof parsed === "object") {
+      return { path: filePath, config: parsed };
+    }
   }
+  return { path: candidates[0], config: {} };
 }
 
 function normalizeExtensionIds(config, args) {
   const extensionIds = [];
-  const add = (v) => {
-    const id = String(v || "").trim();
+  const add = (value) => {
+    const id = String(value || "").trim();
     if (!id) return;
     if (!extensionIds.includes(id)) extensionIds.push(id);
   };
   if (Array.isArray(config.extensionIds)) config.extensionIds.forEach(add);
-  if (config.extensionId) add(config.extensionId);
-  if (args.extensionId) add(args.extensionId);
+  add(config.extensionId);
+  add(args.extensionId);
   if (args.extensionIds) {
     String(args.extensionIds)
       .split(",")
-      .map((s) => s.trim())
+      .map((item) => item.trim())
       .filter(Boolean)
       .forEach(add);
   }
   return extensionIds;
 }
 
-function ensureExecutable(p) {
+function isAbsolutePathForCurrentPlatform(targetPath) {
+  return path.isAbsolute(String(targetPath || ""));
+}
+
+function resolveDataDir(platform, config, args) {
+  const requested = args.dataDir || config.dataDir || process.env.CLAUDEFM_DATA_DIR || "";
+  if (requested) {
+    if (!isAbsolutePathForCurrentPlatform(requested)) {
+      throw new Error(`dataDir must be an absolute path: ${requested}`);
+    }
+    return path.resolve(String(requested));
+  }
+  const home = os.homedir();
+  if (platform === "darwin") return path.join(home, "Documents", "Claudefm");
+  if (platform === "win32") {
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    return path.join(appData, "Claudefm");
+  }
+  const xdgDataHome = process.env.XDG_DATA_HOME;
+  return path.join(xdgDataHome || path.join(home, ".local", "share"), "Claudefm");
+}
+
+function resolveTemplatePath() {
+  const candidate = path.resolve(__dirname, "..", "docs", "superpowers", "specs", "music_user_memory.md");
+  if (!fs.existsSync(candidate)) {
+    throw new Error(`music template not found: ${candidate}`);
+  }
+  return candidate;
+}
+
+function ensureExecutable(targetPath) {
   try {
-    fs.chmodSync(p, 0o755);
+    fs.chmodSync(targetPath, 0o755);
   } catch {}
 }
 
+function ensureDir(targetPath, summary) {
+  if (fs.existsSync(targetPath)) {
+    summary.reused.push(targetPath);
+    return;
+  }
+  fs.mkdirSync(targetPath, { recursive: true });
+  summary.created.push(targetPath);
+}
+
+function ensureFile(targetPath, content, summary) {
+  if (fs.existsSync(targetPath)) {
+    summary.reused.push(targetPath);
+    return;
+  }
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, content, "utf8");
+  summary.created.push(targetPath);
+}
+
+function writeRuntimeConfig(data) {
+  const runtimeConfigPath = path.resolve(__dirname, "runtime-config.json");
+  fs.writeFileSync(runtimeConfigPath, JSON.stringify(data, null, 2), "utf8");
+  return runtimeConfigPath;
+}
+
+function initializeRuntimeData(dataDir) {
+  const summary = { created: [], reused: [] };
+  const templatePath = resolveTemplatePath();
+  const template = String(fs.readFileSync(templatePath, "utf8") || "").trimEnd() + "\n";
+  ensureDir(dataDir, summary);
+  ensureDir(path.join(dataDir, "cache"), summary);
+  ensureDir(path.join(dataDir, "cache", "tracks"), summary);
+  ensureDir(path.join(dataDir, "cache", "covers"), summary);
+  ensureFile(path.join(dataDir, "music.md"), template, summary);
+  ensureFile(path.join(dataDir, "list.md"), "# 历史播放歌单\n\n", summary);
+  ensureFile(
+    path.join(dataDir, "README.txt"),
+    [
+      "Claudefm local runtime data",
+      "",
+      "music.md  : user music memory profile",
+      "list.md   : playlist history",
+      "cache/    : cached tracks and covers",
+      "",
+      "You can delete cache contents safely. Keep music.md and list.md if you want to preserve history.",
+      "",
+    ].join("\n"),
+    summary
+  );
+  return summary;
+}
+
 function writeManifestToDirs(manifest, dirs) {
-  let wrote = false;
+  const result = { manifestPaths: [], failures: [] };
   for (const targetDir of dirs) {
-    const manifestPath = path.join(targetDir, "com.claudiofm.host.json");
+    const manifestPath = path.join(targetDir, "com.claudefm.host.json");
     try {
       fs.mkdirSync(targetDir, { recursive: true });
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-      process.stdout.write(`OK: ${manifestPath}\n`);
-      wrote = true;
-    } catch (e) {
-      const message = e?.message ? String(e.message) : String(e);
-      process.stderr.write(`FAILED: ${manifestPath}\n${message}\n`);
+      result.manifestPaths.push(manifestPath);
+    } catch (error) {
+      const message = error?.message ? String(error.message) : String(error);
+      result.failures.push({ path: manifestPath, message });
     }
   }
-  return wrote;
+  return result;
 }
 
 function windowsRegAdd(browserKey, manifestPath) {
   try {
-    execFileSync(
-      "reg",
-      ["add", browserKey, "/ve", "/t", "REG_SZ", "/d", manifestPath, "/f"],
-      { stdio: "inherit" }
-    );
+    execFileSync("reg", ["add", browserKey, "/ve", "/t", "REG_SZ", "/d", manifestPath, "/f"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -95,28 +185,25 @@ function windowsRegAdd(browserKey, manifestPath) {
 }
 
 function installWindows(manifest) {
-  const manifestPath = path.resolve(__dirname, "com.claudiofm.host.json");
+  const manifestPath = path.resolve(__dirname, "com.claudefm.host.json");
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-  process.stdout.write(`OK: ${manifestPath}\n`);
-
-  const nameKey = "com.claudiofm.host";
-  const keys = [
-    `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${nameKey}`,
-    `HKCU\\Software\\Chromium\\NativeMessagingHosts\\${nameKey}`,
-    `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${nameKey}`,
-    `HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\${nameKey}`,
-    `HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\${nameKey}`,
+  const hostName = "com.claudefm.host";
+  const registryKeys = [
+    `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${hostName}`,
+    `HKCU\\Software\\Chromium\\NativeMessagingHosts\\${hostName}`,
+    `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${hostName}`,
+    `HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\${hostName}`,
+    `HKCU\\Software\\Vivaldi\\NativeMessagingHosts\\${hostName}`,
   ];
-  let ok = false;
-  for (const k of keys) {
-    const wrote = windowsRegAdd(k, manifestPath);
-    if (wrote) ok = true;
+  const registeredKeys = [];
+  const warnings = [];
+  for (const registryKey of registryKeys) {
+    if (windowsRegAdd(registryKey, manifestPath)) registeredKeys.push(registryKey);
   }
-  if (!ok) {
-    process.stdout.write(
-      `\nWindows registry install may have failed. You can manually set a REG_SZ default value to:\n${manifestPath}\n`
-    );
+  if (!registeredKeys.length) {
+    warnings.push(`Windows registry install may have failed. Set the default REG_SZ value to: ${manifestPath}`);
   }
+  return { manifestPaths: [manifestPath], registeredKeys, warnings };
 }
 
 function installMac(manifest) {
@@ -136,7 +223,7 @@ function installMac(manifest) {
     ["Vivaldi"],
     ["Arc"],
   ].map((parts) => path.join(os.homedir(), "Library", "Application Support", ...parts, "NativeMessagingHosts"));
-  writeManifestToDirs(manifest, targets);
+  return writeManifestToDirs(manifest, targets);
 }
 
 function installLinux(manifest) {
@@ -154,33 +241,93 @@ function installLinux(manifest) {
     path.join(home, ".config", "BraveSoftware", "Brave-Browser-Dev", "NativeMessagingHosts"),
     path.join(home, ".config", "vivaldi", "NativeMessagingHosts"),
   ];
-  writeManifestToDirs(manifest, targets);
+  return writeManifestToDirs(manifest, targets);
 }
 
-const args = parseArgs(process.argv.slice(2));
-const config = readConfig();
-const extensionIds = normalizeExtensionIds(config, args);
-if (!extensionIds.length) {
-  throw new Error("Missing extensionId. Set host/install-macos.json or pass --extensionId <id>.");
+function printSummary({
+  platform,
+  configPath,
+  hostPath,
+  dataDir,
+  extensionIds,
+  initSummary,
+  installResult,
+  runtimeConfigPath,
+}) {
+  const warnings = [...(installResult.warnings || [])];
+  for (const failure of installResult.failures || []) {
+    warnings.push(`Manifest write failed: ${failure.path} (${failure.message})`);
+  }
+  const lines = [
+    "Claudefm host install complete.",
+    `Platform: ${platform}`,
+    `Config: ${configPath}`,
+    `Runtime config: ${runtimeConfigPath}`,
+    `Launcher: ${hostPath}`,
+    `Data dir: ${dataDir}`,
+    `Extension IDs: ${extensionIds.join(", ")}`,
+    "",
+    "Created:",
+    ...(initSummary.created.length ? initSummary.created.map((item) => `- ${item}`) : ["- (none)"]),
+    "",
+    "Reused:",
+    ...(initSummary.reused.length ? initSummary.reused.map((item) => `- ${item}`) : ["- (none)"]),
+    "",
+    "Manifest paths:",
+    ...((installResult.manifestPaths || []).length ? installResult.manifestPaths.map((item) => `- ${item}`) : ["- (none)"]),
+  ];
+  if ((installResult.registeredKeys || []).length) {
+    lines.push("", "Windows registry keys:", ...installResult.registeredKeys.map((item) => `- ${item}`));
+  }
+  if (warnings.length) {
+    lines.push("", "Warnings:", ...warnings.map((item) => `- ${item}`));
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 const platform = os.platform();
+const args = parseArgs(process.argv.slice(2));
+const { path: configPath, config } = resolveConfig(platform, args);
+const extensionIds = normalizeExtensionIds(config, args);
+if (!extensionIds.length) {
+  throw new Error(
+    "Missing extensionId. Set the platform install JSON (install-macos/install-linux/install-windows) or pass --extensionId <id>."
+  );
+}
+
 const defaultHostPath =
-  platform === "win32" ? path.resolve(__dirname, "claudiofm-host.cmd") : path.resolve(__dirname, "claudiofm-host.sh");
+  platform === "win32" ? path.resolve(__dirname, "claudefm-host.cmd") : path.resolve(__dirname, "claudefm-host.sh");
 const hostPath = String(args.hostAbsolutePath || config.hostAbsolutePath || defaultHostPath);
 if (!hostPath) throw new Error("Missing hostAbsolutePath");
-
+if (!isAbsolutePathForCurrentPlatform(hostPath)) {
+  throw new Error(`hostAbsolutePath must be an absolute path: ${hostPath}`);
+}
 if (platform !== "win32") ensureExecutable(hostPath);
 
+const dataDir = resolveDataDir(platform, config, args);
+const initSummary = initializeRuntimeData(dataDir);
+const runtimeConfigPath = writeRuntimeConfig({ dataDir });
+
 const manifest = {
-  name: "com.claudiofm.host",
-  description: "Claudiofm Native Host",
+  name: "com.claudefm.host",
+  description: "Claudefm Native Host",
   path: hostPath,
   type: "stdio",
   allowed_origins: extensionIds.map((id) => `chrome-extension://${id}/`),
 };
 
-if (platform === "win32") installWindows(manifest);
-else if (platform === "darwin") installMac(manifest);
-else installLinux(manifest);
+let installResult;
+if (platform === "win32") installResult = installWindows(manifest);
+else if (platform === "darwin") installResult = installMac(manifest);
+else installResult = installLinux(manifest);
 
+printSummary({
+  platform,
+  configPath,
+  hostPath,
+  dataDir,
+  extensionIds,
+  initSummary,
+  installResult,
+  runtimeConfigPath,
+});

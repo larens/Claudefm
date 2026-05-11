@@ -1,4 +1,4 @@
-const HOST_NAME = "com.claudiofm.host";
+const HOST_NAME = "com.claudefm.host";
 const MEMORY_TEMPLATE_PATH = "";
 
 const ports = new Set();
@@ -394,7 +394,7 @@ async function onChat(text, options = {}) {
     const extensionId = chrome.runtime.id;
     const hint =
       resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed")
-        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-macos.json 里的 extensionId，并运行：node host/install.mjs（执行后需要完全退出并重启浏览器）`
+        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-<platform>.json（或 host/install-macos.json 兼容）里的 extensionId，并运行：node host/install.mjs（执行后需要完全退出并重启浏览器）`
         : `Claude Code 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
     broadcast({
       type: "chatResult",
@@ -571,7 +571,7 @@ async function maybeWelcome(port) {
       broadcast({
         type: "chatResult",
         result: {
-          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-macos.json 的 extensionId 后执行：node host/install.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
+          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-<platform>.json（或 host/install-macos.json 兼容）的 extensionId 后执行：node host/install.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
           play: [],
         },
       });
@@ -581,7 +581,7 @@ async function maybeWelcome(port) {
       broadcast({
         type: "chatResult",
         result: {
-          say: `已在 ~/Documents/Claudiofm/ 初始化 music.md（模板来自 ${MEMORY_TEMPLATE_PATH}）。`,
+          say: `已初始化 music.md（模板来自 ${MEMORY_TEMPLATE_PATH}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。`,
           play: [],
         },
       });

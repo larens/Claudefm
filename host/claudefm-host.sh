@@ -6,8 +6,12 @@ HOME="${HOME:-$(eval echo "~")}"
 ORIGINAL_PATH="${PATH:-}"
 PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${HOME}/.npm-global/bin:${HOME}/.local/bin:${HOME}/.bun/bin:${HOME}/.cargo/bin:${ORIGINAL_PATH}"
 
-LOG_DIR="${HOME}/Library/Logs"
-LOG_FILE="${LOG_DIR}/ClaudiofmHost.log"
+if [ "$(uname -s)" = "Darwin" ]; then
+  LOG_DIR="${HOME}/Library/Logs"
+else
+  LOG_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/Claudefm"
+fi
+LOG_FILE="${LOG_DIR}/ClaudefmHost.log"
 mkdir -p "${LOG_DIR}" >/dev/null 2>&1 || true
 
 if [ -z "${CLAUDE_BIN:-}" ]; then
@@ -41,7 +45,7 @@ if [ -z "${NODE_BIN}" ] && [ -x "/usr/local/bin/node" ]; then NODE_BIN="/usr/loc
 if [ -z "${NODE_BIN}" ] && [ -x "/usr/bin/node" ]; then NODE_BIN="/usr/bin/node"; fi
 
 if [ -z "${NODE_BIN}" ]; then
-  echo "ClaudiofmHost: node not found. Please install Node.js (>=18) and retry." 1>&2
+  echo "ClaudefmHost: node not found. Please install Node.js (>=18) and retry." 1>&2
   exit 127
 fi
 

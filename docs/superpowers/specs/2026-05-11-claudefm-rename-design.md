@@ -2,7 +2,7 @@
 
 ## Background
 
-The repository root already uses `Claudefm`, but many internal identifiers still use the old brand `Claudiofm`.
+The repository root already uses `Claudefm`, but many internal identifiers still use the old brand `Claudefm`.
 
 These old names currently appear in:
 
@@ -15,11 +15,11 @@ These old names currently appear in:
 - package names, prompt text, and exported markdown headings
 - existing design documentation and README files
 
-The user requested a full rename from `Claudiofm` to `Claudefm`, including files, protocol names, generated artifacts, and default local storage locations.
+The user requested a full rename from `Claudefm` to `Claudefm`, including files, protocol names, generated artifacts, and default local storage locations.
 
 ## Goals
 
-- Replace all active product-facing and implementation-facing `Claudiofm` identifiers with `Claudefm`
+- Replace all active product-facing and implementation-facing `Claudefm` identifiers with `Claudefm`
 - Rename protocol and installation artifacts, not just UI text
 - Rename launcher files and generated manifest names
 - Rename default runtime data directories and log file names
@@ -27,7 +27,7 @@ The user requested a full rename from `Claudiofm` to `Claudefm`, including files
 
 ## Non-Goals
 
-- No backward compatibility layer for old `Claudiofm` installations
+- No backward compatibility layer for old `Claudefm` installations
 - No fallback to old host names, old registry keys, or old data directories
 - No automatic migration from old local data paths
 - No attempt to preserve old native messaging registrations
@@ -41,7 +41,7 @@ The rename must be done consistently in these forms:
 - environment variable prefix: `CLAUDEFM`
 - native messaging host name: `com.claudefm.host`
 
-Anything still using `Claudiofm`, `claudiofm`, or `CLAUDIOFM` after the change is considered a bug unless it is in git history or an intentionally preserved historical note.
+Anything still using `Claudefm`, `claudefm`, or `CLAUDEFM` after the change is considered a bug unless it is in git history or an intentionally preserved historical note.
 
 ## Scope
 
@@ -57,10 +57,10 @@ Update the extension-facing brand everywhere:
 
 ### 2. Native Host Protocol
 
-Replace the old protocol identity:
+Use the new protocol identity everywhere:
 
-- `com.claudiofm.host` -> `com.claudefm.host`
-- generated manifest file name `com.claudiofm.host.json` -> `com.claudefm.host.json`
+- native messaging host name: `com.claudefm.host`
+- generated manifest file name: `com.claudefm.host.json`
 - Windows registry target keys updated to the new host name
 - allowed origins manifest content preserved, but attached to the new host name
 
@@ -68,49 +68,49 @@ This is intentionally breaking. Users must reinstall the native host after the r
 
 ### 3. Launcher Files And Host Artifacts
 
-Rename active launcher file names:
+Use these active launcher file names:
 
-- `host/claudiofm-host.sh` -> `host/claudefm-host.sh`
-- `host/claudiofm-host.cmd` -> `host/claudefm-host.cmd`
+- `host/claudefm-host.sh`
+- `host/claudefm-host.cmd`
 
-Rename app and host-branded artifact names where they are part of the active repo surface:
+Use these app and host-branded artifact names where they are part of the active repo surface:
 
-- `host/ClaudiofmHost.swift` -> `host/ClaudefmHost.swift`
-- `host/ClaudiofmHost.app` -> `host/ClaudefmHost.app`
+- `host/ClaudefmHost.swift`
+- `host/ClaudefmHost.app`
 
 Any references to those old file names in installer logic, docs, and local absolute paths must be updated together.
 
 ### 4. Runtime Data Paths
 
-Rename default runtime storage directories:
+Use these default runtime storage directories:
 
-- macOS: `~/Documents/Claudiofm` -> `~/Documents/Claudefm`
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/Claudiofm` -> `${XDG_DATA_HOME:-~/.local/share}/Claudefm`
-- Windows: `%APPDATA%\Claudiofm` -> `%APPDATA%\Claudefm`
+- macOS: `~/Documents/Claudefm`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/Claudefm`
+- Windows: `%APPDATA%\Claudefm`
 
-Rename associated log destinations:
+Use these associated log destinations:
 
-- macOS: `~/Library/Logs/ClaudiofmHost.log` -> `~/Library/Logs/ClaudefmHost.log`
-- Linux: `${XDG_STATE_HOME:-~/.local/state}/Claudiofm/ClaudiofmHost.log` -> `${XDG_STATE_HOME:-~/.local/state}/Claudefm/ClaudefmHost.log`
-- Windows: `%TEMP%\ClaudiofmHost.log` -> `%TEMP%\ClaudefmHost.log`
+- macOS: `~/Library/Logs/ClaudefmHost.log`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/Claudefm/ClaudefmHost.log`
+- Windows: `%TEMP%\ClaudefmHost.log`
 
 No compatibility or migration behavior will be added. The new runtime will use only the new paths.
 
 ### 5. Code Identifiers
 
-Rename active code symbols and constants that still expose the old brand:
+Use the new branded code symbols and constants consistently:
 
-- helper names such as `getClaudiofmFolder()` -> `getClaudefmFolder()`
+- helper names such as `getClaudefmFolder()`
 - default path helpers
 - host names and installer constants
 - log constants
-- prompt text headings such as `Claudiofm Memory`
+- prompt text headings such as `Claudefm Memory`
 - user-agent strings using the old product name
 
-Environment variable names are also renamed:
+Use these environment variable names:
 
-- `CLAUDIOFM_DATA_DIR` -> `CLAUDEFM_DATA_DIR`
-- `CLAUDIOFM_TTS_MODEL` -> `CLAUDEFM_TTS_MODEL`
+- `CLAUDEFM_DATA_DIR`
+- `CLAUDEFM_TTS_MODEL`
 
 Because this is a breaking rename, old env vars are not read.
 
@@ -128,10 +128,10 @@ The content should describe only `Claudefm`, not mixed branding.
 
 The implementation is expected to rename at least these tracked paths:
 
-- `host/claudiofm-host.sh`
-- `host/claudiofm-host.cmd`
-- `host/ClaudiofmHost.swift`
-- `host/ClaudiofmHost.app`
+- `host/claudefm-host.sh`
+- `host/claudefm-host.cmd`
+- `host/ClaudefmHost.swift`
+- `host/ClaudefmHost.app`
 
 Additional files may need renaming if they embed the old brand directly in a tracked filename or active bundle directory.
 
@@ -184,7 +184,7 @@ These are intentional outcomes of the chosen scope.
 
 ### Repository Checks
 
-- search the repo for remaining `Claudiofm`, `claudiofm`, and `CLAUDIOFM`
+- search the repo for remaining `Claudefm`, `claudefm`, and `CLAUDEFM`
 - verify only historical notes or intentionally untouched non-active artifacts remain, if any
 
 ### Static Checks
@@ -210,7 +210,7 @@ These are intentional outcomes of the chosen scope.
 
 ## Acceptance Criteria
 
-- The active codebase no longer uses `Claudiofm` naming for product identity or runtime protocol
+- The active codebase no longer uses `Claudefm` naming for product identity or runtime protocol
 - Native Messaging host name is `com.claudefm.host`
 - Default runtime data directories use `Claudefm`
 - Log files use `ClaudefmHost.log`

@@ -13,6 +13,68 @@ function resolveTemplatePath(inputPath) {
   return "";
 }
 
+function getPlatformConfigName(platform = os.platform()) {
+  if (platform === "darwin") return "install-macos.json";
+  if (platform === "win32") return "install-windows.json";
+  return "install-linux.json";
+}
+
+function readInstallConfig() {
+  const candidates = [
+    path.resolve(__dirname, "runtime-config.json"),
+    path.resolve(__dirname, getPlatformConfigName()),
+    path.resolve(__dirname, "install-macos.json"),
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {}
+  }
+  return {};
+}
+
+function getDefaultClaudefmFolder(platform = os.platform()) {
+  const home = os.homedir();
+  if (platform === "darwin") return path.join(home, "Documents", "Claudefm");
+  if (platform === "win32") {
+    const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    return path.join(appData, "Claudefm");
+  }
+  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(home, ".local", "share");
+  return path.join(xdgDataHome, "Claudefm");
+}
+
+function getClaudefmFolder() {
+  const envDir = process.env.CLAUDEFM_DATA_DIR ? String(process.env.CLAUDEFM_DATA_DIR).trim() : "";
+  if (envDir && path.isAbsolute(envDir)) return envDir;
+  const config = readInstallConfig();
+  const configDir = config && config.dataDir ? String(config.dataDir).trim() : "";
+  if (configDir && path.isAbsolute(configDir)) return configDir;
+  return getDefaultClaudefmFolder();
+}
+
+function getMusicFilePath() {
+  return path.join(getClaudefmFolder(), "music.md");
+}
+
+function getListFilePath() {
+  return path.join(getClaudefmFolder(), "list.md");
+}
+
+function getLogFilePath() {
+  const home = os.homedir();
+  if (os.platform() === "darwin") {
+    return path.join(home, "Library", "Logs", "ClaudefmHost.log");
+  }
+  if (os.platform() === "win32") {
+    return path.join(process.env.TEMP || os.tmpdir(), "ClaudefmHost.log");
+  }
+  const stateHome = process.env.XDG_STATE_HOME || path.join(home, ".local", "state");
+  return path.join(stateHome, "Claudefm", "ClaudefmHost.log");
+}
+
 function buildExecEnv() {
   const home = os.homedir();
   const extras = [
@@ -198,7 +260,7 @@ function buildPrompt(input) {
       .join("\n");
 
   const instructions = [
-    `你是 Claudiofm 的 DJ ${dj}。回复必须是中文。`,
+    `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
     "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
     `当前音源来源偏好：${provider}。`,
     "必须输出 JSON，字段遵循给定 schema。",
@@ -369,13 +431,13 @@ function listConfiguredModels() {
       extractModelStrings(data, found);
     } catch {}
   }
-  const envModel = process.env.CLAUDIOFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
+  const envModel = process.env.CLAUDEFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
   if (envModel) found.add(String(envModel).trim());
   return Array.from(found).map((m) => String(m).trim()).filter(Boolean).sort();
 }
 
 function pickTtsModels() {
-  const envModel = process.env.CLAUDIOFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
+  const envModel = process.env.CLAUDEFM_TTS_MODEL || process.env.CLAUDE_TTS_MODEL || process.env.TTS_MODEL;
   const configured = listConfiguredModels();
   const preferred = [];
   if (envModel) preferred.push(String(envModel).trim());
@@ -476,12 +538,8 @@ function runClaudeWithOptionalModel(prompt, schema, model) {
   });
 }
 
-function getClaudiofmFolder() {
-  return path.join(os.homedir(), "Documents", "Claudiofm");
-}
-
 function getCacheFolder() {
-  return path.join(getClaudiofmFolder(), "cache");
+  return path.join(getClaudefmFolder(), "cache");
 }
 
 function ensureCacheFolders() {
@@ -542,7 +600,7 @@ async function downloadCoverToPath(url, outPath, timeoutMs = 8000) {
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    const resp = await fetch(u, { headers: { "user-agent": "ClaudiofmHost/1.0" }, signal: controller.signal });
+    const resp = await fetch(u, { headers: { "user-agent": "ClaudefmHost/1.0" }, signal: controller.signal });
     clearTimeout(t);
     if (!resp.ok) return { ok: false, error: `http ${resp.status}` };
     const buf = Buffer.from(await resp.arrayBuffer());
@@ -680,7 +738,7 @@ async function fetchLyricsLrclib(trackName, artistName) {
   if (!name || !artist) return "";
   const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(name)}&artist_name=${encodeURIComponent(artist)}`;
   try {
-    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudiofmHost/1.0" } });
+    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudefmHost/1.0" } });
     if (!payload || typeof payload !== "object") return "";
     const lyrics = payload.plainLyrics || payload.syncedLyrics || "";
     return normalizeLyricsText(lyrics, 2200);
@@ -695,7 +753,7 @@ async function fetchLyricsLyricsOvh(trackName, artistName) {
   if (!name || !artist) return "";
   const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(name)}`;
   try {
-    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudiofmHost/1.0" } });
+    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudefmHost/1.0" } });
     if (!payload || typeof payload !== "object") return "";
     return normalizeLyricsText(payload.lyrics || "", 2200);
   } catch {
@@ -727,7 +785,7 @@ function buildLyricInterludePrompt(input, tracksWithLyrics) {
   });
 
   const instructions = [
-    `你是 Claudiofm 的 DJ ${dj}。回复必须是中文。`,
+    `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
     "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
     "要求：",
     "- 只输出 JSON，字段遵循 schema（只有 text）。",
@@ -795,7 +853,7 @@ function getTimeSegment(date = new Date()) {
 
 function readMusicMemoryFile(maxChars = 6000) {
   try {
-    const filePath = path.join(os.homedir(), "Documents", "Claudiofm", "music.md");
+    const filePath = getMusicFilePath();
     if (!fs.existsSync(filePath)) return "";
     const content = String(fs.readFileSync(filePath, "utf8") || "").trim();
     if (!content) return "";
@@ -808,7 +866,7 @@ function readMusicMemoryFile(maxChars = 6000) {
 async function getLocationName(latitude, longitude) {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(latitude))}&lon=${encodeURIComponent(String(longitude))}`;
-    const data = await fetchJson(url, { headers: { "User-Agent": "Claudiofm/0.0.1" } });
+    const data = await fetchJson(url, { headers: { "User-Agent": "Claudefm/0.0.1" } });
     const address = data && data.address ? data.address : null;
     if (address && typeof address === "object") {
       for (const key of ["city", "town", "village", "municipality", "county", "state"]) {
@@ -825,7 +883,7 @@ async function getLocationName(latitude, longitude) {
 async function getWeather(latitude, longitude) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(String(latitude))}&longitude=${encodeURIComponent(String(longitude))}&current_weather=true&timezone=auto`;
-    const data = await fetchJson(url, { headers: { "User-Agent": "Claudiofm/0.0.1" } });
+    const data = await fetchJson(url, { headers: { "User-Agent": "Claudefm/0.0.1" } });
     const cw = data && data.current_weather ? data.current_weather : null;
     if (!cw || typeof cw !== "object") return null;
     return { temperature: cw.temperature, windspeed: cw.windspeed, weathercode: cw.weathercode };
@@ -879,7 +937,7 @@ async function buildWelcomeScene(latitude, longitude, profileSummary) {
 }
 
 function appendDailyConversation(input) {
-  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
+  const folder = getClaudefmFolder();
   fs.mkdirSync(folder, { recursive: true });
   const now = new Date();
   const pad2 = (n) => String(n).padStart(2, "0");
@@ -927,7 +985,7 @@ function appendDailyConversation(input) {
 }
 
 function readMemoryFile() {
-  const filePath = path.join(os.homedir(), "Documents", "Claudiofm", "music.md");
+  const filePath = getMusicFilePath();
   if (!fs.existsSync(filePath)) {
     return { ok: false, error: `file not found: ${filePath}` };
   }
@@ -938,8 +996,8 @@ function readMemoryFile() {
 }
 
 function ensureListFile() {
-  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
-  const filePath = path.join(folder, "list.md");
+  const folder = getClaudefmFolder();
+  const filePath = getListFilePath();
   if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(filePath, "# 历史播放歌单\n\n", "utf8");
@@ -1134,8 +1192,8 @@ function prependListSection(input) {
 
 function ensureMusicFile(input) {
   const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
-  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
-  const filePath = path.join(folder, "music.md");
+  const folder = getClaudefmFolder();
+  const filePath = getMusicFilePath();
   if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
   if (!templatePath || !fs.existsSync(templatePath)) {
     return { ok: false, error: `template not found: ${templatePath}` };
@@ -1150,8 +1208,8 @@ function exportMemoryMd(input) {
   const djRaw = input && input.djName ? String(input.djName) : "Claudio";
   const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
   const summary = input && input.profileSummary ? String(input.profileSummary).trim() : "";
-  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
-  const filePath = path.join(folder, "music.md");
+  const folder = getClaudefmFolder();
+  const filePath = getMusicFilePath();
   fs.mkdirSync(folder, { recursive: true });
 
   const now = new Date();
@@ -1159,7 +1217,7 @@ function exportMemoryMd(input) {
   const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
 
   const lines = [];
-  lines.push("# Claudiofm Memory", "", `- DJ: ${dj}`, `- Exported: ${stamp}`, "", "## Profile Summary", "");
+  lines.push("# Claudefm Memory", "", `- DJ: ${dj}`, `- Exported: ${stamp}`, "", "## Profile Summary", "");
   if (summary) {
     for (const line of summary.split("\n")) lines.push(`> ${line}`);
   } else {
@@ -1179,8 +1237,8 @@ function optimizeMemoryFile(input) {
     return Promise.resolve({ ok: false, error: `template not found: ${templatePath}` });
   }
 
-  const folder = path.join(os.homedir(), "Documents", "Claudiofm");
-  const filePath = path.join(folder, "music.md");
+  const folder = getClaudefmFolder();
+  const filePath = getMusicFilePath();
   fs.mkdirSync(folder, { recursive: true });
 
   let template = "";

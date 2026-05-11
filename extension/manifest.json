@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Claudiofm",
+  "name": "Claudefm",
   "version": "0.0.1",
-  "description": "Claudiofm side panel radio",
+  "description": "Claudefm side panel radio",
   "action": {
-    "default_title": "Claudiofm",
+    "default_title": "Claudefm",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

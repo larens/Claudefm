@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .trae/
 .DS_Store
+host/runtime-config.json
+host/com.claudiofm.host.json

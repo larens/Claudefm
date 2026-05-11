@@ -178,13 +178,13 @@ def list_configured_models():
             extract_model_strings(data, found)
         except Exception:
             continue
-    env_model = os.environ.get("CLAUDIOFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
+    env_model = os.environ.get("CLAUDEFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
     if env_model:
         found.add(str(env_model).strip())
     return [m for m in sorted(found) if m]
 
 def pick_tts_models():
-    env_model = os.environ.get("CLAUDIOFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
+    env_model = os.environ.get("CLAUDEFM_TTS_MODEL") or os.environ.get("CLAUDE_TTS_MODEL") or os.environ.get("TTS_MODEL")
     configured = list_configured_models()
     preferred = []
     if env_model:
@@ -350,7 +350,7 @@ def fetch_lyrics_lrclib(track_name, artist_name, timeout=12):
     url = f"https://lrclib.net/api/get?{params}"
     headers = {
         "accept": "application/json",
-        "user-agent": "ClaudiofmHost/1.0",
+        "user-agent": "ClaudefmHost/1.0",
     }
     try:
         payload = fetch_json(url, headers=headers, timeout=timeout)
@@ -372,7 +372,7 @@ def fetch_lyrics_lyrics_ovh(track_name, artist_name, timeout=12):
     )
     headers = {
         "accept": "application/json",
-        "user-agent": "ClaudiofmHost/1.0",
+        "user-agent": "ClaudefmHost/1.0",
     }
     try:
         payload = fetch_json(url, headers=headers, timeout=timeout)
@@ -422,7 +422,7 @@ def build_lyric_interlude_prompt(input_data, tracks_with_lyrics):
         ]))
 
     instructions = [
-        f"你是 Claudiofm 的 DJ {dj}。回复必须是中文。",
+        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
         "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
         "要求：",
         "- 只输出 JSON，字段遵循 schema（只有 text）。",
@@ -495,8 +495,7 @@ def get_time_segment(now=None):
 
 def read_music_memory_file(max_chars=6000):
     try:
-        home = os.path.expanduser("~")
-        p = os.path.join(home, "Documents", "Claudiofm", "music.md")
+        p = get_music_file_path()
         if not os.path.isfile(p):
             return ""
         with open(p, "r", encoding="utf-8") as f:
@@ -512,7 +511,7 @@ def get_location_name(latitude, longitude):
     try:
         params = urllib.parse.urlencode({"format": "jsonv2", "lat": str(latitude), "lon": str(longitude)})
         url = f"https://nominatim.openstreetmap.org/reverse?{params}"
-        data = fetch_json(url, headers={"User-Agent": "Claudiofm/0.0.1"})
+        data = fetch_json(url, headers={"User-Agent": "Claudefm/0.0.1"})
         address = data.get("address") if isinstance(data, dict) else None
         if not isinstance(address, dict):
             return ""
@@ -536,7 +535,7 @@ def get_weather(latitude, longitude):
             }
         )
         url = f"https://api.open-meteo.com/v1/forecast?{params}"
-        data = fetch_json(url, headers={"User-Agent": "Claudiofm/0.0.1"})
+        data = fetch_json(url, headers={"User-Agent": "Claudefm/0.0.1"})
         cw = data.get("current_weather") if isinstance(data, dict) else None
         if not isinstance(cw, dict):
             return None
@@ -591,12 +590,60 @@ def build_welcome_scene(latitude, longitude, profile_summary):
 
     return "\n".join(scene_lines).strip()
 
-def get_claudiofm_folder():
+def get_platform_config_name():
+    if sys.platform == "darwin":
+        return "install-macos.json"
+    if sys.platform.startswith("win"):
+        return "install-windows.json"
+    return "install-linux.json"
+
+def read_install_config():
+    base = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base, "runtime-config.json"),
+        os.path.join(base, get_platform_config_name()),
+        os.path.join(base, "install-macos.json"),
+    ]
+    for p in candidates:
+        try:
+            if not os.path.isfile(p):
+                continue
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            continue
+    return {}
+
+def get_default_claudefm_folder():
     home = os.path.expanduser("~")
-    return os.path.join(home, "Documents", "Claudiofm")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Documents", "Claudefm")
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        return os.path.join(appdata, "Claudefm")
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    return os.path.join(data_home, "Claudefm")
+
+def get_claudefm_folder():
+    env_dir = str(os.environ.get("CLAUDEFM_DATA_DIR") or "").strip()
+    if env_dir and os.path.isabs(env_dir):
+        return env_dir
+    config = read_install_config()
+    config_dir = str(config.get("dataDir", "") if isinstance(config, dict) else "").strip()
+    if config_dir and os.path.isabs(config_dir):
+        return config_dir
+    return get_default_claudefm_folder()
+
+def get_music_file_path():
+    return os.path.join(get_claudefm_folder(), "music.md")
+
+def get_list_file_path():
+    return os.path.join(get_claudefm_folder(), "list.md")
 
 def get_cache_folder():
-    return os.path.join(get_claudiofm_folder(), "cache")
+    return os.path.join(get_claudefm_folder(), "cache")
 
 def ensure_cache_folders():
     base = get_cache_folder()
@@ -647,7 +694,7 @@ def download_cover_to_path(url, out_path, timeout=8):
     if not u or not (u.startswith("http://") or u.startswith("https://")):
         return {"ok": False, "error": "invalid cover url"}
     try:
-        req = urllib.request.Request(u, headers={"user-agent": "ClaudiofmHost/1.0"})
+        req = urllib.request.Request(u, headers={"user-agent": "ClaudefmHost/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             ct = resp.headers.get("content-type", "")
             data = resp.read()
@@ -779,8 +826,8 @@ def get_cached_track_entry(track):
     return {"ok": True, "hit": True, "resolved": resolved}
 
 def ensure_list_file():
-    folder = get_claudiofm_folder()
-    file_path = os.path.join(folder, "list.md")
+    folder = get_claudefm_folder()
+    file_path = get_list_file_path()
     if os.path.isfile(file_path):
         return {"ok": True, "path": file_path, "created": False}
     os.makedirs(folder, exist_ok=True)
@@ -1071,7 +1118,7 @@ def build_prompt(input_data):
         return "\n".join(out)
 
     instructions = [
-        f"你是 Claudiofm 的 DJ {dj}。回复必须是中文。",
+        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
         "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
         f"当前音源来源偏好：{provider}。",
         "必须输出 JSON，字段遵循给定 schema。",
@@ -1226,9 +1273,8 @@ def run_claude(prompt, schema):
         return {"ok": False, "error": f"invalid json from claude: {result.stdout[:500]}"}
 
 def export_memory_md(dj_name, profile_summary):
-    home = os.path.expanduser("~")
-    folder = os.path.join(home, "Documents", "Claudiofm")
-    path = os.path.join(folder, "music.md")
+    folder = get_claudefm_folder()
+    path = get_music_file_path()
     os.makedirs(folder, exist_ok=True)
 
     dj = str(dj_name or "Claudio").replace("\n", " ").replace("\r", " ").strip()[:24] or "Claudio"
@@ -1236,7 +1282,7 @@ def export_memory_md(dj_name, profile_summary):
     summary = str(profile_summary or "").strip()
 
     lines = []
-    lines.append("# Claudiofm Memory")
+    lines.append("# Claudefm Memory")
     lines.append("")
     lines.append(f"- DJ: {dj}")
     lines.append(f"- Exported: {now}")
@@ -1257,9 +1303,8 @@ def export_memory_md(dj_name, profile_summary):
     return {"ok": True, "path": path}
 
 def optimize_memory_file(dj_name, profile_summary, template_path):
-    home = os.path.expanduser("~")
-    folder = os.path.join(home, "Documents", "Claudiofm")
-    out_path = os.path.join(folder, "music.md")
+    folder = get_claudefm_folder()
+    out_path = get_music_file_path()
     os.makedirs(folder, exist_ok=True)
 
     template_path = resolve_template_path(template_path)
@@ -1342,8 +1387,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
     return {"ok": True, "path": out_path}
 
 def append_daily_conversation(kind, user_text, result):
-    home = os.path.expanduser("~")
-    folder = os.path.join(home, "Documents", "Claudiofm")
+    folder = get_claudefm_folder()
     os.makedirs(folder, exist_ok=True)
     date_key = datetime.datetime.now().strftime("%Y%m%d")
     file_path = os.path.join(folder, f"{date_key}_music_memory.md")
@@ -1397,8 +1441,7 @@ def append_daily_conversation(kind, user_text, result):
     return {"ok": True, "path": file_path}
 
 def read_memory_file(max_chars=20000):
-    home = os.path.expanduser("~")
-    file_path = os.path.join(home, "Documents", "Claudiofm", "music.md")
+    file_path = get_music_file_path()
     if not os.path.isfile(file_path):
         return {"ok": False, "error": f"file not found: {file_path}"}
     with open(file_path, "r", encoding="utf-8") as f:
@@ -1409,9 +1452,8 @@ def read_memory_file(max_chars=20000):
     return {"ok": True, "path": file_path, "content": content}
 
 def ensure_music_file(template_path):
-    home = os.path.expanduser("~")
-    folder = os.path.join(home, "Documents", "Claudiofm")
-    file_path = os.path.join(folder, "music.md")
+    folder = get_claudefm_folder()
+    file_path = get_music_file_path()
     if os.path.isfile(file_path):
         return {"ok": True, "path": file_path, "created": False}
     template_path = resolve_template_path(template_path)

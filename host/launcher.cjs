@@ -1,3 +1,5 @@
 #!/usr/bin/env node
-const { execFileSync } = require("child_process");
-execFileSync("/opt/homebrew/bin/node", ["/Users/lairuisi/workspace/Claudiofm/claudiofm-chrome-extension/host/host.cjs"], { stdio: "inherit" });
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+execFileSync(process.execPath, [path.resolve(__dirname, "host.cjs")], { stdio: "inherit" });

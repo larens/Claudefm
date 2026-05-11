@@ -1,70 +1,75 @@
-# Claudiofm Chrome Extension
+# Claudefm Chrome Extension
 
 English · [中文](./README.md)
 
-Claudiofm is a Chrome Side Panel (MV3) extension that turns chat + playlist recommendations into a “DJ-style radio” experience, with a local-first workflow.
+Claudefm is a Chromium Side Panel extension that turns chat, playlist recommendations, and autoplay into a local-first DJ-style music assistant.
 
-- Chat & recommendations: via Native Messaging to your local Claude Code CLI (`claude --bare ...`)
-- Audio source resolution: controlled Web Provider (currently `https://music.pjmp3.com/*`)
-- Data & preferences: local files + `chrome.storage.local` (cloud sync is planned)
+- Chat and recommendations: via Native Messaging to your local Claude Code CLI
+- Audio source resolution: controlled Web Provider, currently `https://music.pjmp3.com/*`
+- Local data: stored by the host on disk, while extension state stays in `chrome.storage.local`
 
-## Repo layout
+## Repo Layout
 
-- `extension/`: Chrome extension (Side Panel UI + background service worker)
-- `host/`: Native Messaging Host for macOS (prefers Python, falls back to Node)
-- `docs/`: internal notes and templates
+- `extension/`: Chrome extension and Side Panel UI
+- `host/`: Native Messaging host, installer, and platform config templates
+- `docs/`: templates and design notes
 
-## Features (current)
+## Features
 
-- Fast chat feedback: shows “Thinking…” immediately and replaces it when the real reply arrives
-- Semantic recommendation policy: not every message triggers a playlist; the DJ can ask for confirmation first
-- DJ “push playlist”: edit the DJ segue line, then push and start playing the new playlist
-- First playlist in a new session: when the queue is empty, recommended tracks start playing automatically
-- Like/Dislike loop: vote on tracks in the queue and history, affecting future recommendations and filtering
-- History & detail view: reads `~/Documents/Claudiofm/list.md` (last 7 days); renders cached covers when available
-- Local cache: Host caches tracks and cover art under `~/Documents/Claudiofm/cache/` for faster loads
-- TTS & interludes: selectable TTS voice; optional “lyric mood interlude” segments
-- Soul panel & context: reads local memory files; can request geolocation for better context
+- Instant chat feedback with semantic confirmation before recommending playlists
+- DJ segue editing, push, and autoplay
+- Like/Dislike loop that affects future recommendations
+- History playback list with detail view
+- Local track and cover cache
+- TTS voice selection and lyric interlude generation
+- Soul panel backed by a local music memory file
 
-## How it works (architecture)
+## Architecture
 
-```
-┌──────────────┐      Native Messaging      ┌────────────────────────┐
-│ Side Panel UI │  ───────────────────────▶ │  Claudiofm Host (macOS) │
-│ (extension/)  │                           │  host.py / host.cjs     │
-└──────┬───────┘                           └───────────┬────────────┘
+```text
+┌──────────────┐      Native Messaging      ┌─────────────────────────────┐
+│ Side Panel UI│  ───────────────────────▶ │ Claudefm Host              │
+│ extension/   │                           │ host.py / host.cjs          │
+└──────┬───────┘                           └───────────┬─────────────────┘
        │                                              │
-       │  chrome.runtime.sendMessage / port            │  claude --bare
-       │                                              │  + cache/files
+       │ chrome.runtime.sendMessage / port            │ claude --bare
+       │                                              │ + local files/cache
 ┌──────▼────────────────────┐                          │
-│ Background Service Worker  │                          │
-│ (extension/background.js)  │                          │
+│ Background Service Worker │                          │
+│ extension/background.js   │                          │
 └──────────┬─────────────────┘                          │
            │                                            │
            │ Provider Tab / Fetch                        │
            ▼                                            ▼
-      https://music.pjmp3.com/*                    ~/Documents/Claudiofm/
+      https://music.pjmp3.com/*                  Claudefm data dir
 ```
 
-## Quick start (macOS / Linux / Windows)
+## Quick Start
 
 ### Prerequisites
 
-- Chrome / Arc (Chromium browser with Side Panel support)
-- Node.js ≥ 18 (to install the native host; runtime optional)
-- Python 3 (optional; if present, `host.py` is preferred)
-- Claude Code CLI available as `claude` in your PATH (or set `CLAUDE_BIN`)
+- Chrome / Edge / Brave / Arc / Chromium
+- Node.js `>=18`
+- Python 3, optional but preferred when available
+- Claude Code CLI available as `claude`
 
-### 1) Load the extension
+### 1. Load The Extension
 
 1. Open `chrome://extensions`
 2. Enable Developer mode
-3. Load unpacked → select `extension/`
-4. Copy the extension ID
+3. Click `Load unpacked`
+4. Select the `extension/` directory
+5. Copy the extension ID
 
-### 2) Configure & install the native host
+### 2. Configure The Installer
 
-Edit `host/install-macos.json`:
+Edit the platform-specific config file:
+
+- macOS: `host/install-macos.json`
+- Linux: `host/install-linux.json`
+- Windows: `host/install-windows.json`
+
+Minimal example:
 
 ```json
 {
@@ -72,46 +77,100 @@ Edit `host/install-macos.json`:
 }
 ```
 
-Install (cross-platform installer: macOS/Linux write NativeMessagingHosts; Windows writes registry keys; default entry is `host/claudiofm-host.sh` or `host/claudiofm-host.cmd`):
+Optional fields:
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID",
+  "dataDir": "/absolute/path/to/Claudefm-data",
+  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
+}
+```
+
+You can also pass values through CLI arguments:
+
+```bash
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
+```
+
+Advanced examples:
+
+```bash
+node host/install.mjs --config host/install-linux.json
+node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+```
+
+### 3. Install The Native Host And Generate Init Files
 
 ```bash
 cd host
 node install.mjs
 ```
 
-Optional: use CLI args instead of editing JSON:
+The installer will:
 
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
+- install the Native Messaging manifest
+- write `host/runtime-config.json`
+- create the local data directory
+- create `music.md`
+- create `list.md`
+- create `cache/`, `cache/tracks/`, and `cache/covers/`
 
-### 3) Open the side panel
+### 4. Open The Side Panel
 
-Click the extension icon and open Side Panel → Claudiofm.
+Click the extension icon and open Side Panel → Claudefm.
+
+## Default Local Data Directories
+
+- macOS: `~/Documents/Claudefm`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/Claudefm`
+- Windows: `%APPDATA%\Claudefm`
+
+Typical contents:
+
+- `music.md`: user music memory profile
+- `list.md`: playlist history
+- `cache/`: cached tracks and covers
+
+## Platform Notes
+
+### macOS
+
+- Config file: `host/install-macos.json`
+- Log file: `~/Library/Logs/ClaudefmHost.log`
+- Native Messaging manifests: under Chromium browser `Library/Application Support/.../NativeMessagingHosts`
+
+### Linux
+
+- Config file: `host/install-linux.json`
+- Log file: `${XDG_STATE_HOME:-~/.local/state}/Claudefm/ClaudefmHost.log`
+- Native Messaging manifests: under browser-specific `~/.config/.../NativeMessagingHosts`
+
+### Windows
+
+- Config file: `host/install-windows.json`
+- Log file: `%TEMP%\ClaudefmHost.log`
+- Native Messaging registration: installer writes current-user registry keys under `HKCU\Software\...\NativeMessagingHosts`
 
 ## Troubleshooting
 
-- Host not allowed / forbidden:
-  - Ensure `host/install-macos.json` has the correct `extensionId`
-  - Re-run `node host/install.mjs`
-  - Fully quit and restart the browser
-- `claude` not found:
-  - Install Claude Code CLI and make sure `claude` is in PATH
-  - Or set `CLAUDE_BIN` to the absolute path of the binary
-- Host logs:
-  - `~/Library/Logs/ClaudiofmHost.log`
+- `forbidden` or `Not allowed`
+- Make sure the `extensionId` in the install config matches `chrome://extensions`
+- Re-run `node host/install.mjs`
+- Fully quit and restart the browser
 
-## Release notes (high-level)
+- `claude` not found
+- Install Claude Code CLI and ensure `claude` is available in `PATH`
+- Or set `CLAUDE_BIN` to the absolute executable path
 
-Recent changes summarized from main branch commit messages:
+- Need a custom data directory
+- Set `dataDir` in the install config
+- Or pass `--dataDir` to the installer
 
-- History cover cache rendering + Like/Dislike UI & recommendation filtering
-- Fix: non-music chat always returns a text reply
-- Prefer model TTS (fallback to browser TTS)
-- Voice selection + lyric interlude
-- History import + Soul panel
-- Fix macOS host installation path and Claude CLI timeout handling
+- Core files were deleted
+- Re-run `node host/install.mjs`
+- The host also keeps lightweight runtime safeguards for missing core files
 
 ## License
 
-No license is declared in this repository yet.
+No license file is declared in this repository yet.
