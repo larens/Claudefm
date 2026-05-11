@@ -122,6 +122,118 @@ def fetch_json(url, headers=None, timeout=12):
         data = resp.read().decode(charset, errors="replace")
         return json.loads(data)
 
+def normalize_lyrics_text(text, max_chars=2000):
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"\r\n|\r", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    if max_chars and len(s) > max_chars:
+        s = s[:max_chars].rstrip()
+    return s
+
+def fetch_lyrics_lrclib(track_name, artist_name, timeout=12):
+    name = str(track_name or "").strip()
+    artist = str(artist_name or "").strip()
+    if not name or not artist:
+        return ""
+    params = urllib.parse.urlencode({"track_name": name, "artist_name": artist})
+    url = f"https://lrclib.net/api/get?{params}"
+    headers = {
+        "accept": "application/json",
+        "user-agent": "ClaudiofmHost/1.0",
+    }
+    try:
+        payload = fetch_json(url, headers=headers, timeout=timeout)
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    lyrics = payload.get("plainLyrics") or payload.get("syncedLyrics") or ""
+    return normalize_lyrics_text(lyrics, 2200)
+
+def fetch_lyrics_lyrics_ovh(track_name, artist_name, timeout=12):
+    name = str(track_name or "").strip()
+    artist = str(artist_name or "").strip()
+    if not name or not artist:
+        return ""
+    url = "https://api.lyrics.ovh/v1/%s/%s" % (
+        urllib.parse.quote(artist, safe=""),
+        urllib.parse.quote(name, safe=""),
+    )
+    headers = {
+        "accept": "application/json",
+        "user-agent": "ClaudiofmHost/1.0",
+    }
+    try:
+        payload = fetch_json(url, headers=headers, timeout=timeout)
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    lyrics = payload.get("lyrics") or ""
+    return normalize_lyrics_text(lyrics, 2200)
+
+def fetch_lyrics_for_track(track):
+    name = str(track.get("name", "") if isinstance(track, dict) else "").strip()
+    artist = str(track.get("artist", "") if isinstance(track, dict) else "").strip()
+    if not name or not artist:
+        return ""
+    lyrics = fetch_lyrics_lrclib(name, artist)
+    if lyrics:
+        return lyrics
+    return fetch_lyrics_lyrics_ovh(name, artist)
+
+def build_lyric_interlude_schema():
+    return {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"}
+        },
+        "required": ["text"]
+    }
+
+def build_lyric_interlude_prompt(input_data, tracks_with_lyrics):
+    dj_raw = input_data.get("djName", "Claudio")
+    dj = str(dj_raw).replace("\n", " ").replace("\r", " ").strip()[:24]
+    if not dj:
+        dj = "Claudio"
+    profile = str(input_data.get("profileSummary", "") or "")
+
+    blocks = []
+    for i, t in enumerate(tracks_with_lyrics):
+        name = str(t.get("name", "")).strip()
+        artist = str(t.get("artist", "")).strip()
+        lyrics = normalize_lyrics_text(t.get("lyrics", ""), 1200)
+        if not (name and artist and lyrics):
+            continue
+        blocks.append("\n".join([
+            f"### {i + 1}. {name} - {artist}",
+            lyrics
+        ]))
+
+    instructions = [
+        f"你是 Claudiofm 的 DJ {dj}。回复必须是中文。",
+        "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
+        "要求：",
+        "- 只输出 JSON，字段遵循 schema（只有 text）。",
+        "- text 是可直接口播的一段话，约 120-220 个汉字。",
+        "- 重点写情绪、意象、共鸣与转场，不要逐首念歌名清单。",
+        "- 可以点到为止引用少量短句（每句不超过 14 个汉字），避免大段原文。",
+        "- 结尾要自然引出下一首，不要问问题。",
+    ]
+
+    parts = [
+        "\n".join(instructions),
+        "",
+        "【画像摘要】",
+        profile or "(空)",
+        "",
+        "【本段歌词】",
+        "\n\n".join(blocks) if blocks else "(空)",
+    ]
+    return "\n".join(parts)
+
 def weather_code_to_zh(code):
     try:
         c = int(code)
@@ -871,6 +983,51 @@ def main():
         if not msg:
             break
         mtype = msg.get("type")
+        if mtype == "lyricInterlude":
+            try:
+                tracks = msg.get("tracks", [])
+                if not isinstance(tracks, list):
+                    tracks = []
+                cleaned = []
+                for t in tracks:
+                    if not isinstance(t, dict):
+                        continue
+                    name = str(t.get("name", "") or "").strip()
+                    artist = str(t.get("artist", "") or "").strip()
+                    if not name or not artist:
+                        continue
+                    cleaned.append({"name": name, "artist": artist})
+                    if len(cleaned) >= 5:
+                        break
+
+                if len(cleaned) < 3:
+                    send_message({"ok": True, "skipped": True, "error": "insufficient tracks"})
+                    continue
+
+                tracks_with_lyrics = []
+                for t in cleaned:
+                    lyrics = fetch_lyrics_for_track(t)
+                    if lyrics:
+                        tracks_with_lyrics.append({**t, "lyrics": lyrics})
+
+                if not tracks_with_lyrics:
+                    send_message({"ok": True, "skipped": True, "error": "lyrics not found"})
+                    continue
+
+                schema = build_lyric_interlude_schema()
+                prompt = build_lyric_interlude_prompt(msg, tracks_with_lyrics)
+                resp = run_claude(prompt, schema)
+                if not resp.get("ok"):
+                    send_message(resp)
+                    continue
+                text = str(resp.get("result", {}).get("text", "") or "").strip()
+                if not text:
+                    send_message({"ok": True, "skipped": True, "error": "empty interlude"})
+                    continue
+                send_message({"ok": True, "result": {"text": text}})
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
         if mtype == "exportMemoryMd":
             try:
                 resp = export_memory_md(msg.get("djName", "Claudio"), msg.get("profileSummary", ""))

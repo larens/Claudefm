@@ -324,6 +324,14 @@ async function onChat(text) {
 
   if (resp.profileSummary) {
     await chrome.storage.local.set({ profileSummary: resp.profileSummary });
+    try {
+      void sendNative({
+        type: "optimizeMemoryFile",
+        djName: prefs.djName ?? "Claudio",
+        profileSummary: resp.profileSummary ?? profileSummary ?? "",
+        templatePath: MEMORY_TEMPLATE_PATH,
+      });
+    } catch {}
   }
 
   broadcast({ type: "chatResult", result: resp.result });
@@ -478,6 +486,14 @@ async function maybeWelcome(port) {
     if (resp?.ok) {
       if (resp.profileSummary) {
         await chrome.storage.local.set({ profileSummary: resp.profileSummary });
+        try {
+          void sendNative({
+            type: "optimizeMemoryFile",
+            djName: prefs.djName ?? "Claudio",
+            profileSummary: resp.profileSummary ?? profileSummary ?? "",
+            templatePath: MEMORY_TEMPLATE_PATH,
+          });
+        } catch {}
       }
       broadcast({ type: "chatResult", result: resp.result });
       try {
@@ -581,6 +597,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.type === "prependListSection") {
         const res = await prependListSectionTracks(msg.kind, msg.tracks);
+        sendResponse(res);
+        return;
+      }
+      if (msg.type === "lyricInterlude") {
+        const prefs = await getPreferences();
+        const { profileSummary } = await chrome.storage.local.get("profileSummary");
+        const tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
+        const res = await sendNative({
+          type: "lyricInterlude",
+          djName: prefs.djName ?? "Claudio",
+          profileSummary: profileSummary ?? "",
+          tracks,
+        });
         sendResponse(res);
         return;
       }
