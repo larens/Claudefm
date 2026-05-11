@@ -252,6 +252,89 @@ async function fetchJson(url, options) {
   return await resp.json();
 }
 
+function normalizeLyricsText(text, maxChars = 2200) {
+  let s = String(text || "").trim();
+  if (!s) return "";
+  s = s.replace(/\r\n|\r/g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  if (maxChars && s.length > maxChars) s = s.slice(0, maxChars).trimEnd();
+  return s;
+}
+
+async function fetchLyricsLrclib(trackName, artistName) {
+  const name = String(trackName || "").trim();
+  const artist = String(artistName || "").trim();
+  if (!name || !artist) return "";
+  const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(name)}&artist_name=${encodeURIComponent(artist)}`;
+  try {
+    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudiofmHost/1.0" } });
+    if (!payload || typeof payload !== "object") return "";
+    const lyrics = payload.plainLyrics || payload.syncedLyrics || "";
+    return normalizeLyricsText(lyrics, 2200);
+  } catch {
+    return "";
+  }
+}
+
+async function fetchLyricsLyricsOvh(trackName, artistName) {
+  const name = String(trackName || "").trim();
+  const artist = String(artistName || "").trim();
+  if (!name || !artist) return "";
+  const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(name)}`;
+  try {
+    const payload = await fetchJson(url, { headers: { accept: "application/json", "User-Agent": "ClaudiofmHost/1.0" } });
+    if (!payload || typeof payload !== "object") return "";
+    return normalizeLyricsText(payload.lyrics || "", 2200);
+  } catch {
+    return "";
+  }
+}
+
+async function fetchLyricsForTrack(track) {
+  const name = track && typeof track === "object" ? String(track.name || "").trim() : "";
+  const artist = track && typeof track === "object" ? String(track.artist || "").trim() : "";
+  if (!name || !artist) return "";
+  const a = await fetchLyricsLrclib(name, artist);
+  if (a) return a;
+  return await fetchLyricsLyricsOvh(name, artist);
+}
+
+function buildLyricInterludePrompt(input, tracksWithLyrics) {
+  const djRaw = input && typeof input === "object" ? input.djName ?? "Claudio" : "Claudio";
+  const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
+  const profile = input && typeof input === "object" ? String(input.profileSummary || "") : "";
+
+  const blocks = [];
+  tracksWithLyrics.forEach((t, i) => {
+    const name = String(t?.name || "").trim();
+    const artist = String(t?.artist || "").trim();
+    const lyrics = normalizeLyricsText(t?.lyrics || "", 1200);
+    if (!name || !artist || !lyrics) return;
+    blocks.push(`### ${i + 1}. ${name} - ${artist}\n${lyrics}`);
+  });
+
+  const instructions = [
+    `你是 Claudiofm 的 DJ ${dj}。回复必须是中文。`,
+    "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
+    "要求：",
+    "- 只输出 JSON，字段遵循 schema（只有 text）。",
+    "- text 是可直接口播的一段话，约 120-220 个汉字。",
+    "- 重点写情绪、意象、共鸣与转场，不要逐首念歌名清单。",
+    "- 可以点到为止引用少量短句（每句不超过 14 个汉字），避免大段原文。",
+    "- 结尾要自然引出下一首，不要问问题。"
+  ];
+
+  return [
+    instructions.join("\n"),
+    "",
+    "【画像摘要】",
+    profile || "(空)",
+    "",
+    "【本段歌词】",
+    blocks.length ? blocks.join("\n\n") : "(空)"
+  ].join("\n");
+}
+
 function weatherCodeToZh(code) {
   const c = Number(code);
   if (!Number.isFinite(c)) return "";
@@ -800,6 +883,49 @@ readNativeMessageStream(async (msg) => {
     }
     if (msg.type === "ensureMusicFile") {
       sendNativeMessage(ensureMusicFile(msg));
+      return;
+    }
+    if (msg.type === "lyricInterlude") {
+      const tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
+      const cleaned = [];
+      for (const t of tracks) {
+        if (!t || typeof t !== "object") continue;
+        const name = String(t.name || "").trim();
+        const artist = String(t.artist || "").trim();
+        if (!name || !artist) continue;
+        cleaned.push({ name, artist });
+        if (cleaned.length >= 5) break;
+      }
+
+      if (cleaned.length < 3) {
+        sendNativeMessage({ ok: true, skipped: true, error: "insufficient tracks" });
+        return;
+      }
+
+      const tracksWithLyrics = [];
+      for (const t of cleaned) {
+        const lyrics = await fetchLyricsForTrack(t);
+        if (lyrics) tracksWithLyrics.push({ ...t, lyrics });
+      }
+
+      if (!tracksWithLyrics.length) {
+        sendNativeMessage({ ok: true, skipped: true, error: "lyrics not found" });
+        return;
+      }
+
+      const schema = { type: "object", properties: { text: { type: "string" } }, required: ["text"] };
+      const prompt = buildLyricInterludePrompt(msg, tracksWithLyrics);
+      const resp = await runClaude(prompt, schema);
+      if (!resp.ok) {
+        sendNativeMessage(resp);
+        return;
+      }
+      const text = resp?.result?.text ? String(resp.result.text).trim() : "";
+      if (!text) {
+        sendNativeMessage({ ok: true, skipped: true, error: "empty interlude" });
+        return;
+      }
+      sendNativeMessage({ ok: true, result: { text } });
       return;
     }
     if (msg.type === "welcome") {

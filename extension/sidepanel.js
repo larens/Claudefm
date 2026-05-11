@@ -41,6 +41,13 @@ const elHistoryDetailName = document.getElementById("historyDetailName");
 const elHistoryDetailArtist = document.getElementById("historyDetailArtist");
 const elHistoryDetailRaw = document.getElementById("historyDetailRaw");
 
+const elBtnSettings = document.getElementById("btnSettings");
+const elSettingsPanel = document.getElementById("settingsPanel");
+const elSettingsClose = document.getElementById("btnSettingsClose");
+const elSettingsStatus = document.getElementById("settingsStatus");
+const elSettingsHint = document.getElementById("settingsHint");
+const elTtsVoiceSelect = document.getElementById("ttsVoiceSelect");
+
 const elTrackTitle = document.getElementById("trackTitle");
 const elTrackTime = document.getElementById("trackTime");
 const elProgress = document.getElementById("progress");
@@ -71,6 +78,15 @@ let preloadIndex = -1;
 let preloadStatus = "idle";
 let preloadRequestToken = 0;
 let playRequestToken = 0;
+
+let ttsVoiceId = "";
+let cachedVoices = [];
+
+let speechActive = false;
+let speechPaused = false;
+let segmentTarget = 0;
+let segmentTracks = [];
+let interludeInFlight = false;
 
 let historySections = [];
 let historySelectedIndex = -1;
@@ -133,6 +149,7 @@ async function prefetchTrackAt(index) {
 
   const track = queue[index];
   if (!track) return;
+  if (isSpeechItem(track)) return;
 
   const token = ++preloadRequestToken;
   preloadIndex = index;
@@ -163,9 +180,11 @@ async function prefetchTrackAt(index) {
 }
 
 function schedulePreloadForNextTrack() {
-  const nextIndex = queueIndex + 1;
-  if (nextIndex >= 0 && nextIndex < queue.length) {
-    void prefetchTrackAt(nextIndex);
+  for (let i = queueIndex + 1; i >= 0 && i < queue.length; i += 1) {
+    const t = queue[i];
+    if (!t) continue;
+    if (isSpeechItem(t)) continue;
+    void prefetchTrackAt(i);
     return;
   }
   clearPreload("no-next-track");
@@ -274,6 +293,34 @@ function buildTitle(track) {
   if (!name) return artist;
   if (!artist) return name;
   return `${name} - ${artist}`;
+}
+
+function randomInt(minInclusive, maxInclusive) {
+  const min = Number(minInclusive);
+  const max = Number(maxInclusive);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return minInclusive;
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+function resetLyricSegment() {
+  segmentTracks = [];
+  segmentTarget = randomInt(3, 5);
+  interludeInFlight = false;
+}
+
+function isSpeechItem(track) {
+  return track && typeof track === "object" && track.kind === "speech";
+}
+
+function buildInterludeItem(text, tracks) {
+  const t = Array.isArray(tracks) ? tracks : [];
+  const count = t.length ? `（${t.length} 首）` : "";
+  return {
+    kind: "speech",
+    name: `插播：歌词情绪解读${count}`,
+    artist: "",
+    text: String(text || "").trim(),
+  };
 }
 
 async function getPreferences() {
@@ -422,6 +469,11 @@ function setSoulStatus(text) {
   elSoulStatus.textContent = text ? String(text) : "";
 }
 
+function setSettingsStatus(text) {
+  if (!elSettingsStatus) return;
+  elSettingsStatus.textContent = text ? String(text) : "";
+}
+
 function openSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = false;
@@ -431,6 +483,93 @@ function openSoulPanel() {
 function closeSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = true;
+}
+
+function openSettingsPanel() {
+  if (!elSettingsPanel) return;
+  elSettingsPanel.hidden = false;
+  void refreshTtsSettingsUI();
+}
+
+function closeSettingsPanel() {
+  if (!elSettingsPanel) return;
+  elSettingsPanel.hidden = true;
+}
+
+function describeVoice(v) {
+  const name = v?.name ? String(v.name).trim() : "";
+  const lang = v?.lang ? String(v.lang).trim() : "";
+  const local = v?.localService ? "本地" : "云端";
+  const parts = [];
+  if (name) parts.push(name);
+  if (lang) parts.push(lang);
+  parts.push(local);
+  return parts.join(" · ") || "未知音色";
+}
+
+function refreshVoiceCache() {
+  if (!("speechSynthesis" in window)) {
+    cachedVoices = [];
+    return;
+  }
+  const voices = window.speechSynthesis.getVoices();
+  cachedVoices = Array.isArray(voices) ? voices.slice() : [];
+  cachedVoices.sort((a, b) => {
+    const la = String(a?.lang || "");
+    const lb = String(b?.lang || "");
+    if (la !== lb) return la.localeCompare(lb);
+    return String(a?.name || "").localeCompare(String(b?.name || ""));
+  });
+}
+
+function pickVoiceById(voiceId) {
+  const id = String(voiceId || "").trim();
+  if (!id) return null;
+  const byUri = cachedVoices.find((v) => String(v?.voiceURI || "") === id);
+  if (byUri) return byUri;
+  const byName = cachedVoices.find((v) => String(v?.name || "") === id);
+  if (byName) return byName;
+  return null;
+}
+
+async function refreshTtsSettingsUI() {
+  if (!elTtsVoiceSelect || !elSettingsHint) return;
+  if (!("speechSynthesis" in window)) {
+    setSettingsStatus("当前浏览器不支持语音合成");
+    elTtsVoiceSelect.innerHTML = "";
+    elSettingsHint.textContent = "";
+    return;
+  }
+
+  refreshVoiceCache();
+  const zhVoices = cachedVoices.filter((v) => String(v?.lang || "").toLowerCase().startsWith("zh"));
+  const list = zhVoices.length ? zhVoices : cachedVoices;
+
+  elTtsVoiceSelect.innerHTML = "";
+  const optDefault = document.createElement("option");
+  optDefault.value = "";
+  optDefault.textContent = "默认（浏览器/系统）";
+  elTtsVoiceSelect.appendChild(optDefault);
+
+  list.forEach((v) => {
+    const opt = document.createElement("option");
+    opt.value = String(v?.voiceURI || v?.name || "");
+    opt.textContent = describeVoice(v);
+    elTtsVoiceSelect.appendChild(opt);
+  });
+
+  const selected = String(ttsVoiceId || "").trim();
+  elTtsVoiceSelect.value = selected;
+  if (selected && elTtsVoiceSelect.value !== selected) {
+    elTtsVoiceSelect.value = "";
+  }
+
+  setSettingsStatus(list.length ? `可用音色：${list.length} 个` : "未发现可用音色");
+  elSettingsHint.textContent = zhVoices.length
+    ? "已优先展示中文音色"
+    : list.length
+      ? "未发现中文音色，已展示全部音色"
+      : "";
 }
 
 async function refreshSoulFromFile() {
@@ -963,6 +1102,53 @@ async function playAt(i) {
     activeAudio.pause();
   } catch {}
 
+  if ("speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
+  }
+  speechActive = false;
+  speechPaused = false;
+
+  if (isSpeechItem(track)) {
+    clearPreload("speech");
+    resetAudioElement(activeAudio);
+    updateTimeUI(0, 0);
+    updateProgressUI(0, 0);
+    renderQueue();
+    const text = track?.text ? String(track.text).trim() : "";
+    if (!text) {
+      setHint("插播内容为空");
+      port.postMessage({ type: "playbackState", playing: false });
+      return;
+    }
+    speechActive = true;
+    speechPaused = false;
+    setPlayingUI(true);
+    port.postMessage({ type: "playbackState", playing: true });
+    schedulePreloadForNextTrack();
+    refreshVoiceCache();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "zh-CN";
+    const v = pickVoiceById(ttsVoiceId);
+    if (v) u.voice = v;
+    await new Promise((resolve) => {
+      u.onend = () => resolve();
+      u.onerror = () => resolve();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+      window.speechSynthesis.speak(u);
+    });
+    if (token !== playRequestToken) return;
+    speechActive = false;
+    speechPaused = false;
+    setPlayingUI(false);
+    port.postMessage({ type: "playbackState", playing: false });
+    await playNext();
+    return;
+  }
+
   if (await activatePreloadedTrack(i)) {
     return;
   }
@@ -1030,11 +1216,41 @@ async function playPrev() {
   await playAt(prev);
 }
 
+async function requestLyricInterlude(tracks) {
+  const list = Array.isArray(tracks) ? tracks : [];
+  const cleaned = list
+    .map((t) => ({
+      name: String(t?.name || "").trim(),
+      artist: String(t?.artist || "").trim(),
+    }))
+    .filter((t) => t.name && t.artist)
+    .slice(0, 5);
+  if (cleaned.length < 3) return { ok: true, skipped: true, error: "insufficient tracks" };
+
+  const timeoutMs = 12000;
+  const timeoutResp = new Promise((resolve) => {
+    setTimeout(() => resolve({ ok: true, skipped: true, error: "timeout" }), timeoutMs);
+  });
+  try {
+    const resp = await Promise.race([
+      chrome.runtime.sendMessage({ type: "lyricInterlude", tracks: cleaned }),
+      timeoutResp,
+    ]);
+    return resp ?? { ok: true, skipped: true, error: "empty response" };
+  } catch (e) {
+    const message = e?.message ? String(e.message) : String(e);
+    return { ok: false, error: message };
+  }
+}
+
 function speak(text) {
   if (!text) return;
   if (!("speechSynthesis" in window)) return;
+  refreshVoiceCache();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "zh-CN";
+  const v = pickVoiceById(ttsVoiceId);
+  if (v) u.voice = v;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
@@ -1075,6 +1291,7 @@ async function handleAssistantResult(result) {
     setHint(`已推荐 ${result.play.length} 首歌曲，可点歌单查看/播放`);
     if (queue.length === 0 || queueIndex >= queue.length - 1) {
       segueSpokenInQueue = 0;
+      resetLyricSegment();
     }
     queue = queue.concat(
       result.play.map((t) => ({
@@ -1129,6 +1346,11 @@ port.onMessage.addListener(async (msg) => {
   }
   if (msg.type === "chatResult") {
     await handleAssistantResult(msg.result);
+    if (elSoulPanel && !elSoulPanel.hidden) {
+      try {
+        await refreshSoulFromFile();
+      } catch {}
+    }
     return;
   }
   if (msg.type === "interruptStart") {
@@ -1244,6 +1466,24 @@ elBtnQueue.addEventListener("click", () => {
 });
 
 elBtnPlay.addEventListener("click", async () => {
+  if (speechActive && "speechSynthesis" in window) {
+    if (speechPaused) {
+      speechPaused = false;
+      try {
+        window.speechSynthesis.resume();
+      } catch {}
+      setPlayingUI(true);
+      port.postMessage({ type: "playbackState", playing: true });
+    } else {
+      speechPaused = true;
+      try {
+        window.speechSynthesis.pause();
+      } catch {}
+      setPlayingUI(false);
+      port.postMessage({ type: "playbackState", playing: false });
+    }
+    return;
+  }
   if (!activeAudio.src) {
     if (queue.length) await playAt(Math.max(queueIndex, 0));
     return;
@@ -1316,6 +1556,33 @@ function bindAudioEvents(audio, label) {
 
   audio.addEventListener("ended", async () => {
     if (audio !== activeAudio) return;
+    const stableToken = playRequestToken;
+    const finishedIndex = queueIndex;
+    const finished = queue[finishedIndex];
+    if (segmentTarget <= 0) resetLyricSegment();
+    if (finished && !isSpeechItem(finished)) {
+      const name = String(finished?.name || "").trim();
+      const artist = String(finished?.artist || "").trim();
+      if (name && artist) {
+        segmentTracks.push({ name, artist });
+      }
+      if (!interludeInFlight && segmentTracks.length >= segmentTarget) {
+        interludeInFlight = true;
+        setHint("正在生成歌词情绪解读…");
+        const snapshot = segmentTracks.slice(0, 5);
+        const resp = await requestLyricInterlude(snapshot);
+        if (stableToken !== playRequestToken) return;
+        const text = resp?.ok && resp?.result?.text ? String(resp.result.text).trim() : "";
+        if (text && !resp?.skipped) {
+          const item = buildInterludeItem(text, snapshot);
+          queue.splice(finishedIndex + 1, 0, item);
+          renderQueue();
+          appendMessage("assistant", text);
+          setHint("已插入一段歌词情绪解读");
+        }
+        resetLyricSegment();
+      }
+    }
     await playNext();
   });
 
@@ -1453,6 +1720,7 @@ if (elBtnSoul && elSoulPanel) {
     const nextOpen = elSoulPanel.hidden;
     if (nextOpen) {
       closeHistoryPanel();
+      closeSettingsPanel();
       openSoulPanel();
       await refreshSoulFromFile();
     } else {
@@ -1476,6 +1744,7 @@ if (elBtnHistory && elHistoryPanel) {
     const nextOpen = elHistoryPanel.hidden;
     if (nextOpen) {
       closeSoulPanel();
+      closeSettingsPanel();
       openHistoryPanel();
       await refreshHistoryFromFile();
     } else {
@@ -1511,6 +1780,44 @@ if (elHistoryImport && elHistoryImportFile) {
   });
 }
 
+if (elBtnSettings && elSettingsPanel) {
+  elBtnSettings.addEventListener("click", async () => {
+    const nextOpen = elSettingsPanel.hidden;
+    if (nextOpen) {
+      closeSoulPanel();
+      closeHistoryPanel();
+      openSettingsPanel();
+    } else {
+      closeSettingsPanel();
+    }
+  });
+}
+
+if (elSettingsClose) {
+  elSettingsClose.addEventListener("click", () => closeSettingsPanel());
+}
+
+if (elSettingsPanel) {
+  elSettingsPanel.addEventListener("click", (e) => {
+    if (e.target === elSettingsPanel) closeSettingsPanel();
+  });
+}
+
+if (elTtsVoiceSelect) {
+  elTtsVoiceSelect.addEventListener("change", async () => {
+    const next = String(elTtsVoiceSelect.value || "").trim();
+    ttsVoiceId = next;
+    try {
+      await patchPreferences({ ttsVoiceId: next });
+      setHint("已保存口播音色");
+    } catch (e) {
+      const message = e?.message ? String(e.message) : String(e);
+      setHint(`保存失败：${message}`);
+    }
+    await refreshTtsSettingsUI();
+  });
+}
+
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (elHistoryPanel && !elHistoryPanel.hidden) {
@@ -1519,6 +1826,9 @@ window.addEventListener("keydown", (e) => {
   } else if (elSoulPanel && !elSoulPanel.hidden) {
     e.preventDefault();
     closeSoulPanel();
+  } else if (elSettingsPanel && !elSettingsPanel.hidden) {
+    e.preventDefault();
+    closeSettingsPanel();
   }
 });
 
@@ -1529,4 +1839,14 @@ port.postMessage({ type: "ready" });
   const prefs = await getPreferences();
   setDjNameUI(prefs.djName || "Claudio");
   setAvatarUI(prefs.avatarDataUrl || "");
+  ttsVoiceId = String(prefs.ttsVoiceId || "").trim();
+  if ("speechSynthesis" in window) {
+    refreshVoiceCache();
+    try {
+      window.speechSynthesis.onvoiceschanged = () => {
+        refreshVoiceCache();
+        if (elSettingsPanel && !elSettingsPanel.hidden) void refreshTtsSettingsUI();
+      };
+    } catch {}
+  }
 })();
