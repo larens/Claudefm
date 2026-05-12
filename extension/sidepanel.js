@@ -66,6 +66,13 @@ const elTtsVoiceCount = document.getElementById("ttsVoiceCount");
 const elTtsVoiceSelect = document.getElementById("ttsVoiceSelect");
 const elSettingsKeepSession = document.getElementById("settingsKeepSession");
 
+const elAiToolModeAuto = document.getElementById("aiToolModeAuto");
+const elAiToolModeManual = document.getElementById("aiToolModeManual");
+const elAiToolSelect = document.getElementById("aiToolSelect");
+const elAiToolStatus = document.getElementById("aiToolStatus");
+const elAiToolRefresh = document.getElementById("aiToolRefresh");
+const elAiToolHint = document.getElementById("aiToolHint");
+
 const elTrackTitle = document.getElementById("trackTitle");
 const elTrackTime = document.getElementById("trackTime");
 const elProgress = document.getElementById("progress");
@@ -92,6 +99,8 @@ let playerDuration = 0;
 let currentTrack = null;
 
 let ttsVoiceId = "";
+let localAiToolMode = "auto";
+let localAiToolId = "";
 let cachedVoices = [];
 
 let speechActive = false;
@@ -788,6 +797,7 @@ function openSettingsPanel() {
   refreshOverlayTransientUiState();
   refreshSettingsDjNameUI();
   void refreshTtsSettingsUI();
+  void refreshAiToolSettingsUI();
 }
 
 function closeSettingsPanel() {
@@ -874,6 +884,57 @@ async function refreshTtsSettingsUI() {
     : list.length
       ? "未发现中文音色，已展示全部音色"
       : "";
+}
+
+async function refreshAiToolSettingsUI(forceRefresh = false) {
+  if (!elAiToolSelect || !elAiToolStatus) return;
+  elAiToolStatus.textContent = "正在检测本地 AI 工具…";
+  elAiToolHint.textContent = "";
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "detectLocalAiTools", forceRefresh });
+    if (!resp || resp.ok === false) {
+      elAiToolStatus.textContent = resp?.error?.includes("unknown message type")
+        ? "Host 版本过低，不支持工具检测"
+        : `检测失败：${resp?.error || "无响应"}`;
+      elAiToolSelect.innerHTML = "";
+      return;
+    }
+    const tools = Array.isArray(resp.tools) ? resp.tools : [];
+    elAiToolSelect.innerHTML = "";
+    for (const tool of tools) {
+      const opt = document.createElement("option");
+      opt.value = tool.id;
+      const statusSuffix = tool.callable ? "可直接调用" : tool.installed ? "仅检测展示" : "未安装";
+      opt.textContent = `${tool.label} · ${statusSuffix}`;
+      elAiToolSelect.appendChild(opt);
+    }
+    const recommendedId = resp.recommendedToolId || "";
+    const resolvedId = resp.resolvedToolId || recommendedId;
+    const selectedId = localAiToolMode === "manual" && localAiToolId ? localAiToolId : resolvedId;
+    elAiToolSelect.value = selectedId;
+    if (elAiToolSelect.value !== selectedId) elAiToolSelect.value = "";
+    elAiToolSelect.disabled = localAiToolMode === "auto";
+    const resolvedTool = tools.find((t) => t.id === (selectedId || resolvedId));
+    elAiToolStatus.textContent = resolvedTool
+      ? `当前使用：${resolvedTool.label}（${resolvedTool.statusText || "已检测"}）`
+      : tools.length
+        ? "未发现可用工具"
+        : "未检测到本地 AI 工具";
+    if (localAiToolMode === "manual" && localAiToolId) {
+      const selectedTool = tools.find((t) => t.id === localAiToolId);
+      if (selectedTool && !selectedTool.callable) {
+        elAiToolHint.textContent = `注意：${selectedTool.label} 暂不支持直接调用。聊天功能将无法使用。`;
+      } else {
+        elAiToolHint.textContent = "";
+      }
+    } else if (!recommendedId && tools.length) {
+      elAiToolHint.textContent = "未发现可直接调用的 CLI 工具。请安装 Claude Code 或其他支持的工具。";
+    } else {
+      elAiToolHint.textContent = "";
+    }
+  } catch (e) {
+    elAiToolStatus.textContent = `检测请求失败：${e?.message || e}`;
+  }
 }
 
 async function refreshSoulFromFile() {
@@ -1949,6 +2010,47 @@ if (elSettingsKeepSession) {
   });
 }
 
+if (elAiToolModeAuto) {
+  elAiToolModeAuto.addEventListener("change", async () => {
+    if (!elAiToolModeAuto.checked) return;
+    localAiToolMode = "auto";
+    try { await patchPreferences({ localAiToolMode: "auto" }); } catch {}
+    setHint("已切换为自动检测模式");
+    await refreshAiToolSettingsUI();
+  });
+}
+
+if (elAiToolModeManual) {
+  elAiToolModeManual.addEventListener("change", async () => {
+    if (!elAiToolModeManual.checked) return;
+    localAiToolMode = "manual";
+    const selectedId = elAiToolSelect ? String(elAiToolSelect.value || "").trim() : "";
+    localAiToolId = selectedId;
+    try { await patchPreferences({ localAiToolMode: "manual", localAiToolId: selectedId }); } catch {}
+    setHint("已切换为手动选择模式");
+    await refreshAiToolSettingsUI();
+  });
+}
+
+if (elAiToolSelect) {
+  elAiToolSelect.addEventListener("change", async () => {
+    if (localAiToolMode !== "manual") return;
+    const selectedId = String(elAiToolSelect.value || "").trim();
+    localAiToolId = selectedId;
+    try { await patchPreferences({ localAiToolId: selectedId }); } catch {}
+    setHint("已保存工具选择");
+    await refreshAiToolSettingsUI();
+  });
+}
+
+if (elAiToolRefresh) {
+  elAiToolRefresh.addEventListener("click", async () => {
+    setHint("正在刷新工具检测…");
+    await refreshAiToolSettingsUI(true);
+    setHint("工具检测已刷新");
+  });
+}
+
 async function saveDjNameFromSettings() {
   if (!elSettingsDjNameInput) return;
   const raw = String(elSettingsDjNameInput.value || "").trim();
@@ -2020,6 +2122,11 @@ safePost({ type: "ready" });
   ttsVoiceId = String(prefs.ttsVoiceId || "").trim();
   keepSessionOnClose = prefs.keepSessionOnClose !== false;
   if (elSettingsKeepSession) elSettingsKeepSession.checked = keepSessionOnClose;
+  localAiToolMode = prefs.localAiToolMode || "auto";
+  localAiToolId = prefs.localAiToolId || "";
+  if (elAiToolModeAuto) elAiToolModeAuto.checked = localAiToolMode === "auto";
+  if (elAiToolModeManual) elAiToolModeManual.checked = localAiToolMode === "manual";
+  if (elAiToolSelect) elAiToolSelect.disabled = localAiToolMode === "auto";
   if (keepSessionOnClose) {
     await restoreSessionIfAny();
   } else {

@@ -445,15 +445,20 @@ async function onChat(text, options = {}) {
     forceRecommend: Boolean(options?.forceRecommend),
     likedTracks: likedTracks.slice(0, 20),
     dislikedTracks: dislikedTracks.slice(0, 20),
+    preferences: {
+      localAiToolMode: prefs.localAiToolMode || "auto",
+      localAiToolId: prefs.localAiToolId || "",
+    },
   };
 
   const resp = await sendNative(payload);
   if (!resp?.ok) {
     const extensionId = chrome.runtime.id;
+    const toolLabel = resp?.toolContext?.toolLabel || "本地 AI 工具";
     const hint =
       resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed")
         ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-<platform>.json（或 host/install-macos.json 兼容）里的 extensionId，并运行：node host/install.mjs（执行后需要完全退出并重启浏览器）`
-        : `Claude Code 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
+        : `${toolLabel} 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
     broadcast({
       type: "chatResult",
       result: { say: resp?.error || "Claude Code 不可用或 Host 未安装。", play: [] },
@@ -480,7 +485,7 @@ async function onChat(text, options = {}) {
     }
   } catch {}
 
-  broadcast({ type: "chatResult", result: resp.result });
+  broadcast({ type: "chatResult", result: resp.result, toolContext: resp.toolContext || null });
   try {
     await appendDailyConversation("chat", text, resp.result);
   } catch {}
@@ -885,6 +890,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const voiceId = msg.voiceId ? String(msg.voiceId) : "";
         const res = await sendNative({ type: "tts", text, voiceId });
         sendResponse(res);
+        return;
+      }
+      if (msg.type === "detectLocalAiTools") {
+        const res = await sendNative({ type: "detectLocalAiTools", forceRefresh: Boolean(msg.forceRefresh) });
+        sendResponse(res || { ok: false, error: "Host 无响应" });
+        return;
+      }
+      if (msg.type === "getResolvedLocalAiTool") {
+        const prefs = await getPreferences();
+        const res = await sendNative({
+          type: "getResolvedLocalAiTool",
+          preferences: {
+            localAiToolMode: prefs.localAiToolMode || "auto",
+            localAiToolId: prefs.localAiToolId || "",
+          },
+        });
+        sendResponse(res || { ok: false, error: "Host 无响应" });
         return;
       }
       sendResponse({ ok: false, error: "unknown message type" });
