@@ -1194,6 +1194,26 @@ def send_message(obj):
     sys.stdout.buffer.write(header + json_bytes)
     sys.stdout.buffer.flush()
 
+def build_chat_only_schema():
+    return {
+        "type": "object",
+        "properties": {
+            "say": {"type": "string", "minLength": 1},
+            "memory": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["type", "text"]
+                }
+            }
+        },
+        "required": ["say"]
+    }
+
 def build_schema():
     return {
         "type": "object",
@@ -1245,30 +1265,55 @@ def apply_memory(profile_summary, memory):
             lines.append(line)
     return "\n".join(lines[-200:])
 
-def build_prompt(input_data):
-    dj_raw = input_data.get("djName", "Claudio")
-    dj = str(dj_raw).replace("\n", " ").replace("\r", " ").strip()[:24]
+def build_chat_only_prompt(input_data):
+    dj_raw = input_data.get(“djName”, “Claudio”)
+    dj = str(dj_raw).replace(“\n”, “ “).replace(“\r”, “ “).strip()[:24]
     if not dj:
-        dj = "Claudio"
-    provider = input_data.get("provider", "qq")
-    profile = input_data.get("profileSummary", "")
-    scene = input_data.get("scene", "")
-    force = input_data.get("forceProfileRefresh", False)
-    force_recommend = bool(input_data.get("forceRecommend", False))
+        dj = “Claudio”
+    profile = input_data.get(“profileSummary”, “”)
+
+    instructions = [
+        f”你是 Claudefm 的 DJ {dj}。回复必须是中文。”,
+        “你的任务：根据用户消息进行简短友好的对话回应。”,
+        “风格：电台 DJ，亲切自然，简洁有温度。”,
+        “禁止推荐歌单，只做对话回应。”,
+        “memory 用于写回画像偏好（可选，1-2 条）。”,
+    ]
+
+    return “\n”.join([
+        “\n”.join(instructions),
+        “”,
+        “【画像摘要】”,
+        profile or “(空)”,
+        “”,
+        “【用户消息】”,
+        input_data.get(“text”, “”)
+    ])
+
+def build_prompt(input_data):
+    dj_raw = input_data.get(“djName”, “Claudio”)
+    dj = str(dj_raw).replace(“\n”, “ “).replace(“\r”, “ “).strip()[:24]
+    if not dj:
+        dj = “Claudio”
+    provider = input_data.get(“provider”, “qq”)
+    profile = input_data.get(“profileSummary”, “”)
+    scene = input_data.get(“scene”, “”)
+    force = input_data.get(“forceProfileRefresh”, False)
+    force_recommend = bool(input_data.get(“forceRecommend”, False))
     try:
-        list_md = read_list_file(max_chars=6000).get("content", "")
+        list_md = read_list_file(max_chars=6000).get(“content”, “”)
     except Exception:
-        list_md = ""
+        list_md = “”
     try:
         mem_md = read_music_memory_file()
     except Exception:
-        mem_md = ""
+        mem_md = “”
 
     liked = []
     disliked = []
     try:
-        liked = input_data.get("likedTracks", []) if isinstance(input_data.get("likedTracks", []), list) else []
-        disliked = input_data.get("dislikedTracks", []) if isinstance(input_data.get("dislikedTracks", []), list) else []
+        liked = input_data.get(“likedTracks”, []) if isinstance(input_data.get(“likedTracks”, []), list) else []
+        disliked = input_data.get(“dislikedTracks”, []) if isinstance(input_data.get(“dislikedTracks”, []), list) else []
     except Exception:
         liked = []
         disliked = []
@@ -1278,59 +1323,59 @@ def build_prompt(input_data):
         for t in items[:limit]:
             if not isinstance(t, dict):
                 continue
-            name = str(t.get("name", "") or "").strip()
-            artist = str(t.get("artist", "") or "").strip()
+            name = str(t.get(“name”, “”) or “”).strip()
+            artist = str(t.get(“artist”, “”) or “”).strip()
             if not name or not artist:
                 continue
-            out.append(f"- {name} - {artist}")
-        return "\n".join(out)
+            out.append(f”- {name} - {artist}”)
+        return “\n”.join(out)
 
     instructions = [
-        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
-        "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
-        f"当前音源来源偏好：{provider}。",
-        "必须输出 JSON，字段遵循给定 schema。",
-        "无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。",
-        "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
-        "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
-        "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
-        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
-        "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
-        "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
-        "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
-        "每首歌只输出 name/artist；album/query/provider 可选。",
-        "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
+        f”你是 Claudefm 的 DJ {dj}。回复必须是中文。”,
+        “你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。”,
+        f”当前音源来源偏好：{provider}。”,
+        “必须输出 JSON，字段遵循给定 schema。”,
+        “无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。”,
+        “当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来”可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。”,
+        “确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如”要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。”,
+        “当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。”,
+        “当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。”,
+        “当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。”,
+        “当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。”,
+        “强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。”,
+        “偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。”,
+        “每首歌只输出 name/artist；album/query/provider 可选。”,
+        “memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。”,
     ]
     if force:
-        instructions.append("这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。")
+        instructions.append(“这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。”)
 
-    return "\n".join([
-        "\n".join(instructions),
-        "",
-        "【forceRecommend】",
-        "true" if force_recommend else "false",
-        "",
-        "【likedTracks（赞）】",
-        fmt_track_lines(liked) or "(空)",
-        "",
-        "【dislikedTracks（踩）】",
-        fmt_track_lines(disliked) or "(空)",
-        "",
-        "【历史播放歌单（list.md 摘要）】",
-        str(list_md or "").strip() or "(空)",
-        "",
-        "【历史记忆文件（music.md 摘要）】",
-        str(mem_md or "").strip() or "(空)",
-        "",
-        "【画像摘要】",
-        profile or "(空)",
-        "",
-        "【场景信息】",
-        scene or "(空)",
-        "",
-        "【用户消息】",
-        input_data.get("text", "")
+    return “\n”.join([
+        “\n”.join(instructions),
+        “”,
+        “【forceRecommend】”,
+        “true” if force_recommend else “false”,
+        “”,
+        “【likedTracks（赞）】”,
+        fmt_track_lines(liked) or “(空)”,
+        “”,
+        “【dislikedTracks（踩）】”,
+        fmt_track_lines(disliked) or “(空)”,
+        “”,
+        “【历史播放歌单（list.md 摘要）】”,
+        str(list_md or “”).strip() or “(空)”,
+        “”,
+        “【历史记忆文件（music.md 摘要）】”,
+        str(mem_md or “”).strip() or “(空)”,
+        “”,
+        “【画像摘要】”,
+        profile or “(空)”,
+        “”,
+        “【场景信息】”,
+        scene or “(空)”,
+        “”,
+        “【用户消息】”,
+        input_data.get(“text”, “”)
     ])
 
 def parse_songs_from_text(text):
@@ -1881,8 +1926,13 @@ def main():
             send_message({"ok": False, "error": "unknown message type"})
             continue
 
-        schema = build_schema()
-        prompt = build_prompt(msg)
+        chat_only = bool(msg.get("chatOnly", False))
+        if chat_only:
+            schema = build_chat_only_schema()
+            prompt = build_chat_only_prompt(msg)
+        else:
+            schema = build_schema()
+            prompt = build_prompt(msg)
 
         detection = detect_local_ai_tools()
         resolved = resolve_local_ai_tool(msg.get("preferences", {}), detection)

@@ -16,12 +16,14 @@ Claudefm 是一个 Chromium Side Panel 扩展，把“DJ 对话 + 歌单推荐 +
 ## 功能概览
 
 - 即时对话反馈，支持按语义确认是否真的要推荐歌单
-- DJ 推荐语编辑、推送并自动播放
+- DJ 推荐语编辑、推送并播放（可配置自动播放或手动确认）
 - 点赞/踩闭环，影响后续推荐与过滤
 - 历史歌单读取与详情查看
 - 本地缓存歌曲与封面
 - TTS 音色选择与歌词情绪插播
 - Soul 面板读取本地音乐记忆文件
+- 本地 AI 工具自动检测与调用（Claude Code 等）
+- 后台播放：Side Panel 关闭后音乐继续播放
 
 ## 架构
 
@@ -48,8 +50,8 @@ Claudefm 是一个 Chromium Side Panel 扩展，把“DJ 对话 + 歌单推荐 +
 ### 前置条件
 
 - Chrome / Edge / Brave / Arc / Chromium 等 Chromium 浏览器
-- Node.js `>=18`
-- Python 3（可选；存在时优先使用 `host.py`）
+- Node.js `>=18`（推荐）
+- Python 3（可选，Node.js 不可用时回退使用）
 - Claude Code CLI 可执行，命令为 `claude`
 
 ### 1. 加载扩展
@@ -119,6 +121,18 @@ node install.mjs
 
 点击扩展图标，打开 Side Panel → Claudefm。
 
+## 设置
+
+点击侧栏右上角齿轮图标打开设置面板：
+
+| 设置项 | 说明 |
+|--------|------|
+| DJ 名称 | 自定义 DJ 角色名称（最多 8 字） |
+| 口播音色 | 选择 TTS 语音音色 |
+| 收起侧边栏保留会话 | 关闭侧栏后是否保留对话历史 |
+| DJ 推荐自动播放 | 开启时 DJ 推荐直接播放；关闭时显示确认按钮，手动点击后才播放 |
+| 本地 AI 工具 | 自动检测或手动选择本地 AI CLI 工具 |
+
 ## 默认本地数据目录
 
 - macOS：`~/Documents/Claudefm`
@@ -172,4 +186,4 @@ node install.mjs
 
 ## License
 
-仓库目前未声明许可证；如需对外发布，建议补充 `LICENSE` 文件。
+[MIT](./LICENSE)

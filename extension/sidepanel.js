@@ -65,6 +65,7 @@ const elSettingsDjNameSave = document.getElementById("settingsDjNameSave");
 const elTtsVoiceCount = document.getElementById("ttsVoiceCount");
 const elTtsVoiceSelect = document.getElementById("ttsVoiceSelect");
 const elSettingsKeepSession = document.getElementById("settingsKeepSession");
+const elSettingsAutoRecommend = document.getElementById("settingsAutoRecommend");
 
 const elAiToolModeAuto = document.getElementById("aiToolModeAuto");
 const elAiToolModeManual = document.getElementById("aiToolModeManual");
@@ -108,6 +109,7 @@ let speechPaused = false;
 
 const SESSION_KEY = "sidepanelSessionV1";
 let keepSessionOnClose = true;
+let autoRecommendPlay = true;
 let sessionMessages = [];
 let sessionSaveTimer = null;
 
@@ -445,6 +447,12 @@ function showRecommendPush(tracks, defaultSegue) {
     } catch {}
   };
 
+  if (autoRecommendPlay) {
+    setHint(`已推荐 ${list.length} 首歌曲，正在开始播放`);
+    void pushQueue(defaultSegue);
+    return;
+  }
+
   const wrap = document.createElement("div");
   wrap.className = "recommendCard";
 
@@ -483,8 +491,6 @@ function showRecommendPush(tracks, defaultSegue) {
   wrap.appendChild(actions);
   recommendCardEl = wrap;
   appendChatNode(wrap);
-
-  void pushQueue(defaultSegue);
 }
 
 function scheduleSessionSave() {
@@ -1608,8 +1614,7 @@ async function handleAssistantResult(result) {
   if (hasTracks) {
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
-    const isFreshSession = queueIndex === -1 && queue.length === 0 && !currentTrack;
-    if (isFreshSession) {
+    if (autoRecommendPlay) {
       setHint(`已推荐 ${result.play.length} 首歌曲，正在开始播放`);
       segueSpokenInQueue = 0;
       const nextItems = [];
@@ -1710,7 +1715,7 @@ elSend.addEventListener("click", async () => {
   clearRecommendCard();
   startPendingAssistant();
   try {
-    void chrome.runtime.sendMessage({ type: "chat", text });
+    void chrome.runtime.sendMessage({ type: "chat", text, chatOnly: true });
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     clearPendingAssistant();
@@ -2010,6 +2015,17 @@ if (elSettingsKeepSession) {
   });
 }
 
+if (elSettingsAutoRecommend) {
+  elSettingsAutoRecommend.addEventListener("change", async () => {
+    const enabled = Boolean(elSettingsAutoRecommend.checked);
+    autoRecommendPlay = enabled;
+    try {
+      await patchPreferences({ autoRecommendPlay: enabled });
+    } catch {}
+    setHint(enabled ? "已开启 DJ 推荐自动播放" : "已关闭 DJ 推荐自动播放，推荐时将显示确认按钮");
+  });
+}
+
 if (elAiToolModeAuto) {
   elAiToolModeAuto.addEventListener("change", async () => {
     if (!elAiToolModeAuto.checked) return;
@@ -2122,6 +2138,8 @@ safePost({ type: "ready" });
   ttsVoiceId = String(prefs.ttsVoiceId || "").trim();
   keepSessionOnClose = prefs.keepSessionOnClose !== false;
   if (elSettingsKeepSession) elSettingsKeepSession.checked = keepSessionOnClose;
+  autoRecommendPlay = prefs.autoRecommendPlay !== false;
+  if (elSettingsAutoRecommend) elSettingsAutoRecommend.checked = autoRecommendPlay;
   localAiToolMode = prefs.localAiToolMode || "auto";
   localAiToolId = prefs.localAiToolId || "";
   if (elAiToolModeAuto) elAiToolModeAuto.checked = localAiToolMode === "auto";

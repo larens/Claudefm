@@ -443,6 +443,7 @@ async function onChat(text, options = {}) {
     turnCountSinceLastProfileRefresh: nextTurnCount % 3,
     forceProfileRefresh: nextTurnCount % 3 === 0,
     forceRecommend: Boolean(options?.forceRecommend),
+    chatOnly: Boolean(options?.chatOnly),
     likedTracks: likedTracks.slice(0, 20),
     dislikedTracks: dislikedTracks.slice(0, 20),
     preferences: {
@@ -823,7 +824,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.type === "chat") {
         sendResponse({ ok: true });
-        void onChat(msg.text, { forceRecommend: Boolean(msg.forceRecommend) }).catch((error) => {
+        void onChat(msg.text, { forceRecommend: Boolean(msg.forceRecommend), chatOnly: Boolean(msg.chatOnly) }).catch((error) => {
           const message = error?.message ? String(error.message) : String(error);
           broadcast({
             type: "chatResult",

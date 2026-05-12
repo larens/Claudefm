@@ -16,12 +16,14 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 ## Features
 
 - Instant chat feedback with semantic confirmation before recommending playlists
-- DJ segue editing, push, and autoplay
+- DJ segue editing, push, and playback (configurable autoplay or manual confirmation)
 - Like/Dislike loop that affects future recommendations
 - History playback list with detail view
 - Local track and cover cache
 - TTS voice selection and lyric interlude generation
 - Soul panel backed by a local music memory file
+- Local AI tool auto-detection and invocation (Claude Code, etc.)
+- Background playback: music continues playing after Side Panel is closed
 
 ## Architecture
 
@@ -48,8 +50,8 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 ### Prerequisites
 
 - Chrome / Edge / Brave / Arc / Chromium
-- Node.js `>=18`
-- Python 3, optional but preferred when available
+- Node.js `>=18` (recommended)
+- Python 3 (optional, fallback when Node.js is unavailable)
 - Claude Code CLI available as `claude`
 
 ### 1. Load The Extension
@@ -119,6 +121,18 @@ The installer will:
 
 Click the extension icon and open Side Panel → Claudefm.
 
+## Settings
+
+Click the gear icon in the top-right corner of the side panel to open settings:
+
+| Setting | Description |
+|---------|-------------|
+| DJ Name | Customize the DJ persona name (max 8 chars) |
+| TTS Voice | Select text-to-speech voice |
+| Keep session on close | Preserve chat history when side panel is closed |
+| DJ auto-play | When ON, DJ recommendations play immediately; when OFF, shows confirm buttons before playing |
+| Local AI Tool | Auto-detect or manually select a local AI CLI tool |
+
 ## Default Local Data Directories
 
 - macOS: `~/Documents/Claudefm`
@@ -172,4 +186,4 @@ Typical contents:
 
 ## License
 
-No license file is declared in this repository yet.
+[MIT](./LICENSE)
