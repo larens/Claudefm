@@ -4,8 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const { AI_TOOLS, getToolById } = require("./ai-tools.cjs");
 
 function resolveTemplatePath(inputPath) {
   const provided = inputPath ? String(inputPath) : "";
@@ -110,6 +113,158 @@ function findClaudeBinary() {
     } catch {}
   }
   return "claude";
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tool detection & execution abstraction
+// ---------------------------------------------------------------------------
+
+function detectBinaryForTool(toolDef) {
+  const envKeys = Array.isArray(toolDef.envKeys) ? toolDef.envKeys : [];
+  for (const key of envKeys) {
+    const val = process.env[key];
+    if (val && fs.existsSync(val)) return { found: true, path: String(val) };
+  }
+  const candidates = Array.isArray(toolDef.binaryCandidates) ? toolDef.binaryCandidates : [];
+  for (const bin of candidates) {
+    for (const shell of ["zsh", "bash"]) {
+      try {
+        const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
+        if (!shellPath) continue;
+        const found = spawnSync(shellPath, ["-lc", `command -v ${bin} 2>/dev/null || true`], {
+          encoding: "utf8",
+          env: buildExecEnv(),
+        }).stdout.trim();
+        if (found && fs.existsSync(found)) return { found: true, path: found };
+      } catch {}
+    }
+  }
+  const home = os.homedir();
+  const pathDirs = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, "workspace", ".npm-global", "bin"),
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin"),
+  ];
+  for (const bin of candidates) {
+    for (const dir of pathDirs) {
+      const p = path.join(dir, bin);
+      try {
+        if (fs.existsSync(p)) return { found: true, path: p };
+      } catch {}
+    }
+  }
+  return { found: false, path: "" };
+}
+
+function detectAppForTool(toolDef) {
+  const appCandidates = Array.isArray(toolDef.appCandidates) ? toolDef.appCandidates : [];
+  const home = os.homedir();
+  const platform = os.platform();
+  for (const name of appCandidates) {
+    const appName = name.endsWith(".app") ? name : name + ".app";
+    if (platform === "darwin") {
+      const dirs = ["/Applications", path.join(home, "Applications")];
+      for (const dir of dirs) {
+        const p = path.join(dir, appName);
+        try {
+          if (fs.existsSync(p)) return { found: true, path: p };
+        } catch {}
+      }
+    } else if (platform === "win32") {
+      const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+      const p = path.join(localAppData, "Programs", name);
+      try {
+        if (fs.existsSync(p)) return { found: true, path: p };
+      } catch {}
+    } else {
+      const p = path.join("/usr", "share", "applications", name.toLowerCase() + ".desktop");
+      try {
+        if (fs.existsSync(p)) return { found: true, path: p };
+      } catch {}
+    }
+  }
+  if (toolDef.binaryCandidates && toolDef.binaryCandidates.length) {
+    const binResult = detectBinaryForTool(toolDef);
+    if (binResult.found) return binResult;
+  }
+  return { found: false, path: "" };
+}
+
+let _detectionCache = null;
+let _detectionCacheTs = 0;
+const DETECTION_CACHE_TTL_MS = 30000;
+
+function detectLocalAiTools(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && _detectionCache && now - _detectionCacheTs < DETECTION_CACHE_TTL_MS) {
+    return _detectionCache;
+  }
+  const tools = [];
+  for (const def of AI_TOOLS) {
+    let detected = { found: false, path: "" };
+    if (def.detectionMode === "binary") {
+      detected = detectBinaryForTool(def);
+    } else if (def.detectionMode === "app_bundle") {
+      detected = detectAppForTool(def);
+    } else if (def.detectionMode === "path_probe") {
+      detected = detectBinaryForTool(def);
+    }
+    const installed = detected.found;
+    const callable = installed && def.executionMode === "cli";
+    let statusText = "未安装";
+    if (installed && callable) statusText = "已安装，可直接调用";
+    else if (installed) statusText = "已安装，仅检测展示";
+    tools.push({
+      id: def.id,
+      label: def.label,
+      category: def.category,
+      installed,
+      callable,
+      executionMode: def.executionMode,
+      statusText,
+      resolvedPath: detected.path || "",
+      priority: def.priority,
+      description: def.description || "",
+      installHint: def.installHint || "",
+    });
+  }
+  const callableTools = tools.filter((t) => t.callable).sort((a, b) => a.priority - b.priority);
+  const recommendedToolId = callableTools.length ? callableTools[0].id : "";
+  const result = { tools, recommendedToolId, resolvedToolId: recommendedToolId };
+  _detectionCache = result;
+  _detectionCacheTs = now;
+  return result;
+}
+
+function resolveLocalAiTool(preferences, detectionResult) {
+  const mode = preferences && preferences.localAiToolMode ? String(preferences.localAiToolMode) : "auto";
+  if (mode === "manual") {
+    const id = preferences && preferences.localAiToolId ? String(preferences.localAiToolId).trim() : "";
+    if (id) {
+      const tool = (detectionResult.tools || []).find((t) => t.id === id);
+      if (tool) return { tool, mode: "manual", resolvedToolId: tool.id };
+    }
+    return { tool: null, mode: "manual", resolvedToolId: "" };
+  }
+  const recId = detectionResult.recommendedToolId || "";
+  const tool = recId ? (detectionResult.tools || []).find((t) => t.id === recId) : null;
+  return { tool, mode: "auto", resolvedToolId: recId };
+}
+
+function runWithLocalAiTool(tool, prompt, schema) {
+  if (!tool) return { ok: false, error: "未指定工具" };
+  if (!tool.callable) {
+    if (tool.executionMode === "unsupported") {
+      return { ok: false, error: `工具 ${tool.label} 暂不支持直接调用，仅支持安装检测` };
+    }
+    return { ok: false, error: `工具 ${tool.label} 当前不可用` };
+  }
+  if (tool.id === "claude_code") return runClaude(prompt, schema);
+  return { ok: false, error: `工具 ${tool.label} 暂无适配器` };
 }
 
 function sanitizeMarkdownOutput(text, requiredHeading) {
@@ -603,6 +758,34 @@ readNativeMessageStream(async (msg) => {
     }
     return;
   }
+  if (msg.type === "detectLocalAiTools") {
+    try {
+      const forceRefresh = Boolean(msg.forceRefresh);
+      const result = detectLocalAiTools(forceRefresh);
+      sendNativeMessage({ ok: true, ...result });
+    } catch (e) {
+      const message = e?.message ? String(e.message) : String(e);
+      sendNativeMessage({ ok: false, error: message });
+    }
+    return;
+  }
+  if (msg.type === "getResolvedLocalAiTool") {
+    try {
+      const detection = detectLocalAiTools();
+      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+      sendNativeMessage({
+        ok: true,
+        tool: resolved.tool,
+        mode: resolved.mode,
+        resolvedToolId: resolved.resolvedToolId,
+        detectionResult: detection,
+      });
+    } catch (e) {
+      const message = e?.message ? String(e.message) : String(e);
+      sendNativeMessage({ ok: false, error: message });
+    }
+    return;
+  }
   if (msg.type === "welcome") {
     try {
       const schema = buildSchema();
@@ -610,6 +793,14 @@ readNativeMessageStream(async (msg) => {
       const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
       const provider = msg.provider || "paojiao";
       const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
+
+      const detection = detectLocalAiTools();
+      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+      if (!resolved.tool) {
+        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+        return;
+      }
+
       const scene = await buildWelcomeScene(msg.latitude, msg.longitude, profileSummary);
       const prompt = buildPrompt({
         provider,
@@ -620,13 +811,13 @@ readNativeMessageStream(async (msg) => {
         forceProfileRefresh: false
       });
 
-      const resp = await runClaude(prompt, schema);
+      const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
       if (!resp.ok) {
-        sendNativeMessage(resp);
+        sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
         return;
       }
       const nextProfile = applyMemory(profileSummary, resp.result.memory || []);
-      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile });
+      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
     } catch (e) {
       const message = e?.message ? String(e.message) : String(e);
       sendNativeMessage({ ok: false, error: message });
@@ -669,12 +860,20 @@ readNativeMessageStream(async (msg) => {
 
   const schema = buildSchema();
   const prompt = buildPrompt(msg);
-  const resp = await runClaude(prompt, schema);
+
+  const detection = detectLocalAiTools();
+  const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+  if (!resolved.tool) {
+    sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+    return;
+  }
+
+  const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
   if (!resp.ok) {
-    sendNativeMessage(resp);
+    sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
     return;
   }
 
   const nextProfile = applyMemory(msg.profileSummary || "", resp.result.memory || []);
-  sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile });
+  sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
 });

@@ -12,6 +12,26 @@ import shutil
 import base64
 import hashlib
 
+# Load tool registry
+_AI_TOOLS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai-tools.json")
+try:
+    with open(_AI_TOOLS_PATH, "r", encoding="utf-8") as f:
+        AI_TOOLS = json.load(f)
+except Exception:
+    AI_TOOLS = []
+
+def get_tool_by_id(tool_id):
+    if not tool_id:
+        return None
+    s = str(tool_id).strip()
+    for t in AI_TOOLS:
+        if t.get("id") == s:
+            return t
+    return None
+
+def get_callable_tools():
+    return [t for t in AI_TOOLS if t.get("executionMode") == "cli"]
+
 def resolve_template_path(input_path):
     provided = str(input_path or "")
     if provided and os.path.isfile(provided):
@@ -84,6 +104,154 @@ def find_claude_binary():
         if os.path.isfile(p):
             return p
     return ""
+
+# ---------------------------------------------------------------------------
+# Multi-tool detection & execution abstraction
+# ---------------------------------------------------------------------------
+
+def detect_binary_for_tool(tool_def):
+    env_keys = tool_def.get("envKeys") or []
+    for key in env_keys:
+        val = os.environ.get(key, "").strip()
+        if val and os.path.isfile(val):
+            return {"found": True, "path": val}
+    candidates = tool_def.get("binaryCandidates") or []
+    for bin_name in candidates:
+        which = shutil.which(bin_name)
+        if which:
+            return {"found": True, "path": which}
+        for shell in ("zsh", "bash"):
+            shell_path = shutil.which(shell)
+            if not shell_path:
+                continue
+            try:
+                result = subprocess.run(
+                    [shell_path, "-lc", f"command -v {bin_name} 2>/dev/null || true"],
+                    capture_output=True, text=True, timeout=5, env=build_exec_env(),
+                )
+                found = str(result.stdout or "").strip()
+                if found and os.path.isfile(found):
+                    return {"found": True, "path": found}
+            except Exception:
+                pass
+    home = os.path.expanduser("~")
+    path_dirs = [
+        "/opt/homebrew/bin", "/usr/local/bin",
+        os.path.join(home, ".npm-global", "bin"),
+        os.path.join(home, "workspace", ".npm-global", "bin"),
+        os.path.join(home, ".local", "bin"),
+        os.path.join(home, ".bun", "bin"),
+        os.path.join(home, ".cargo", "bin"),
+    ]
+    for bin_name in candidates:
+        for d in path_dirs:
+            p = os.path.join(d, bin_name)
+            if os.path.isfile(p):
+                return {"found": True, "path": p}
+    return {"found": False, "path": ""}
+
+def detect_app_for_tool(tool_def):
+    app_candidates = tool_def.get("appCandidates") or []
+    home = os.path.expanduser("~")
+    platform = sys.platform
+    for name in app_candidates:
+        app_name = name if name.endswith(".app") else name + ".app"
+        if platform == "darwin":
+            for d in ("/Applications", os.path.join(home, "Applications")):
+                p = os.path.join(d, app_name)
+                if os.path.isdir(p):
+                    return {"found": True, "path": p}
+        elif platform == "win32":
+            local_app_data = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+            p = os.path.join(local_app_data, "Programs", name)
+            if os.path.isdir(p):
+                return {"found": True, "path": p}
+        else:
+            p = os.path.join("/usr", "share", "applications", name.lower() + ".desktop")
+            if os.path.isfile(p):
+                return {"found": True, "path": p}
+    # Also try binary detection for tools that have both app and binary candidates
+    if tool_def.get("binaryCandidates"):
+        bin_result = detect_binary_for_tool(tool_def)
+        if bin_result["found"]:
+            return bin_result
+    return {"found": False, "path": ""}
+
+_detection_cache = None
+_detection_cache_ts = 0
+DETECTION_CACHE_TTL_MS = 30000
+
+def detect_local_ai_tools(force_refresh=False):
+    global _detection_cache, _detection_cache_ts
+    import time
+    now = int(time.time() * 1000)
+    if not force_refresh and _detection_cache is not None and now - _detection_cache_ts < DETECTION_CACHE_TTL_MS:
+        return _detection_cache
+    tools = []
+    for defn in AI_TOOLS:
+        detected = {"found": False, "path": ""}
+        mode = defn.get("detectionMode", "")
+        if mode == "binary":
+            detected = detect_binary_for_tool(defn)
+        elif mode == "app_bundle":
+            detected = detect_app_for_tool(defn)
+        elif mode == "path_probe":
+            detected = detect_binary_for_tool(defn)
+        installed = detected["found"]
+        callable_ = installed and defn.get("executionMode") == "cli"
+        status_text = "未安装"
+        if installed and callable_:
+            status_text = "已安装，可直接调用"
+        elif installed:
+            status_text = "已安装，仅检测展示"
+        tools.append({
+            "id": defn.get("id", ""),
+            "label": defn.get("label", ""),
+            "category": defn.get("category", ""),
+            "installed": installed,
+            "callable": callable_,
+            "executionMode": defn.get("executionMode", ""),
+            "statusText": status_text,
+            "resolvedPath": detected.get("path", ""),
+            "priority": defn.get("priority", 99),
+            "description": defn.get("description", ""),
+            "installHint": defn.get("installHint", ""),
+        })
+    callable_tools = sorted([t for t in tools if t["callable"]], key=lambda t: t["priority"])
+    recommended_tool_id = callable_tools[0]["id"] if callable_tools else ""
+    result = {"tools": tools, "recommendedToolId": recommended_tool_id, "resolvedToolId": recommended_tool_id}
+    _detection_cache = result
+    _detection_cache_ts = now
+    return result
+
+def resolve_local_ai_tool(preferences, detection_result):
+    mode = str((preferences or {}).get("localAiToolMode", "auto") or "auto")
+    if mode == "manual":
+        tool_id = str((preferences or {}).get("localAiToolId", "") or "").strip()
+        if tool_id:
+            for t in detection_result.get("tools", []):
+                if t.get("id") == tool_id:
+                    return {"tool": t, "mode": "manual", "resolvedToolId": t["id"]}
+        return {"tool": None, "mode": "manual", "resolvedToolId": ""}
+    rec_id = detection_result.get("recommendedToolId", "")
+    tool = None
+    if rec_id:
+        for t in detection_result.get("tools", []):
+            if t.get("id") == rec_id:
+                tool = t
+                break
+    return {"tool": tool, "mode": "auto", "resolvedToolId": rec_id}
+
+def run_with_local_ai_tool(tool, prompt, schema):
+    if not tool:
+        return {"ok": False, "error": "未指定工具"}
+    if not tool.get("callable"):
+        if tool.get("executionMode") == "unsupported":
+            return {"ok": False, "error": f"工具 {tool.get('label', '未知')} 暂不支持直接调用，仅支持安装检测"}
+        return {"ok": False, "error": f"工具 {tool.get('label', '未知')} 当前不可用"}
+    if tool.get("id") == "claude_code":
+        return run_claude(prompt, schema)
+    return {"ok": False, "error": f"工具 {tool.get('label', '未知')} 暂无适配器"}
 
 def get_claude_timeout_seconds():
     raw = os.environ.get("CLAUDE_TIMEOUT_SECONDS") or os.environ.get("CLAUDE_TIMEOUT") or ""
@@ -1598,6 +1766,28 @@ def main():
             except Exception as e:
                 send_message({"ok": False, "error": str(e)})
             continue
+        if mtype == "detectLocalAiTools":
+            try:
+                force_refresh = bool(msg.get("forceRefresh", False))
+                result = detect_local_ai_tools(force_refresh)
+                send_message({"ok": True, **result})
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
+        if mtype == "getResolvedLocalAiTool":
+            try:
+                detection = detect_local_ai_tools()
+                resolved = resolve_local_ai_tool(msg.get("preferences", {}), detection)
+                send_message({
+                    "ok": True,
+                    "tool": resolved["tool"],
+                    "mode": resolved["mode"],
+                    "resolvedToolId": resolved["resolvedToolId"],
+                    "detectionResult": detection,
+                })
+            except Exception as e:
+                send_message({"ok": False, "error": str(e)})
+            continue
         if mtype == "welcome":
             try:
                 schema = build_schema()
@@ -1611,6 +1801,12 @@ def main():
                     lat = None
                     lon = None
 
+                detection = detect_local_ai_tools()
+                resolved = resolve_local_ai_tool(msg.get("preferences", {}), detection)
+                if not resolved["tool"]:
+                    send_message({"ok": False, "error": "未发现可直接调用的本地 AI 工具", "toolContext": {"mode": resolved["mode"]}})
+                    continue
+
                 scene = build_welcome_scene(lat, lon, profile)
                 payload = {
                     "djName": msg.get("djName", "Claudio"),
@@ -1622,12 +1818,13 @@ def main():
                     "forceRecommend": True,
                 }
                 prompt = build_prompt(payload)
-                resp = run_claude(prompt, schema)
+                resp = run_with_local_ai_tool(resolved["tool"], prompt, schema)
                 if not resp.get("ok"):
+                    resp["toolContext"] = {"toolId": resolved["tool"]["id"], "toolLabel": resolved["tool"]["label"], "mode": resolved["mode"]}
                     send_message(resp)
                     continue
                 next_profile = apply_memory(profile, resp["result"].get("memory", []))
-                send_message({"ok": True, "result": resp["result"], "profileSummary": next_profile})
+                send_message({"ok": True, "result": resp["result"], "profileSummary": next_profile, "toolContext": {"toolId": resolved["tool"]["id"], "toolLabel": resolved["tool"]["label"], "mode": resolved["mode"]}})
             except Exception as e:
                 send_message({"ok": False, "error": str(e)})
             continue
@@ -1683,14 +1880,22 @@ def main():
 
         schema = build_schema()
         prompt = build_prompt(msg)
-        resp = run_claude(prompt, schema)
+
+        detection = detect_local_ai_tools()
+        resolved = resolve_local_ai_tool(msg.get("preferences", {}), detection)
+        if not resolved["tool"]:
+            send_message({"ok": False, "error": "未发现可直接调用的本地 AI 工具", "toolContext": {"mode": resolved["mode"]}})
+            continue
+
+        resp = run_with_local_ai_tool(resolved["tool"], prompt, schema)
 
         if not resp.get("ok"):
+            resp["toolContext"] = {"toolId": resolved["tool"]["id"], "toolLabel": resolved["tool"]["label"], "mode": resolved["mode"]}
             send_message(resp)
             continue
 
         next_profile = apply_memory(msg.get("profileSummary", ""), resp["result"].get("memory", []))
-        send_message({"ok": True, "result": resp["result"], "profileSummary": next_profile})
+        send_message({"ok": True, "result": resp["result"], "profileSummary": next_profile, "toolContext": {"toolId": resolved["tool"]["id"], "toolLabel": resolved["tool"]["label"], "mode": resolved["mode"]}})
 
 if __name__ == "__main__":
     main()

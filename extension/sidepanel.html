@@ -165,6 +165,33 @@
               </label>
             </div>
           </div>
+            <div class="settingsDivider"></div>
+            <div class="settingsSectionTitle">本地 AI 工具</div>
+            <div class="settingsRow">
+              <div class="settingsLabel">检测模式</div>
+              <div class="settingsInline">
+                <label class="settingsRadioLabel">
+                  <input type="radio" name="aiToolMode" value="auto" id="aiToolModeAuto" checked />
+                  <span>自动检测</span>
+                </label>
+                <label class="settingsRadioLabel">
+                  <input type="radio" name="aiToolMode" value="manual" id="aiToolModeManual" />
+                  <span>手动选择</span>
+                </label>
+              </div>
+            </div>
+            <div class="settingsRow">
+              <div class="settingsLabel">工具选择</div>
+              <select class="settingsSelect" id="aiToolSelect" disabled></select>
+            </div>
+            <div class="settingsRow">
+              <div class="settingsLabel">当前状态</div>
+              <div class="settingsStatusText" id="aiToolStatus">检测中…</div>
+            </div>
+            <div class="settingsInline">
+              <button class="settingsBtn" id="aiToolRefresh">刷新检测</button>
+            </div>
+            <div class="settingsHint" id="aiToolHint"></div>
             <div class="settingsHint" id="settingsHint"></div>
           </div>
         </div>
