@@ -35,7 +35,7 @@ play 数组长度必须在 5 到 10 之间。
 
 result = subprocess.run(
     ["claude", "--bare", "-p", prompt, "--output-format", "json", "--json-schema", json.dumps(schema)],
-    capture_output=True, text=True, timeout=30
+    capture_output=True, text=True, encoding="utf-8", timeout=30
 )
 print("Return code:", result.returncode)
 print("STDOUT:", result.stdout[:800] if result.stdout else "empty")

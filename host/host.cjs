@@ -78,51 +78,100 @@ function getLogFilePath() {
 
 function buildExecEnv() {
   const home = os.homedir();
+  const sep = path.delimiter;
   const extras = [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
     path.join(home, ".npm-global", "bin"),
     path.join(home, ".local", "bin"),
     path.join(home, ".bun", "bin"),
     path.join(home, ".cargo", "bin")
   ];
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    const localAppdata = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    extras.push(
+      path.join(appdata, "npm"),
+      path.join(localAppdata, "Microsoft", "WinGet", "Packages")
+    );
+  } else {
+    extras.push(
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin"
+    );
+  }
   const current = String(process.env.PATH || "");
-  const nextPath = Array.from(new Set([...extras, ...current.split(":").filter(Boolean)])).join(":");
+  const nextPath = Array.from(new Set([...extras, ...current.split(sep).filter(Boolean)])).join(sep);
   return { ...process.env, HOME: process.env.HOME || home, PATH: nextPath };
+}
+
+function findBinaryInDirs(dirs, binName, extensions = [""]) {
+  for (const d of dirs) {
+    try {
+      if (!fs.statSync(d).isDirectory()) continue;
+    } catch { continue; }
+    for (const ext of extensions) {
+      const p = path.join(d, binName + ext);
+      try { if (fs.statSync(p).isFile()) return p; } catch {}
+    }
+    try {
+      for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          for (const ext of extensions) {
+            const p = path.join(d, entry.name, binName + ext);
+            try { if (fs.statSync(p).isFile()) return p; } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+  return "";
 }
 
 function findClaudeBinary() {
   const envBin = process.env.CLAUDE_BIN || process.env.CLAUDE_PATH;
   if (envBin && fs.existsSync(envBin)) return String(envBin);
-  for (const shell of ["zsh", "bash"]) {
-    try {
-      const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
-      if (!shellPath) continue;
-      const found = spawnSync(shellPath, ["-lc", "command -v claude 2>/dev/null || true"], {
-        encoding: "utf8",
-        env: buildExecEnv(),
-      }).stdout.trim();
-      if (found && fs.existsSync(found)) return found;
-    } catch {}
+  if (process.platform !== "win32") {
+    for (const shell of ["zsh", "bash"]) {
+      try {
+        const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
+        if (!shellPath) continue;
+        const found = spawnSync(shellPath, ["-lc", "command -v claude 2>/dev/null || true"], {
+          encoding: "utf8",
+          env: buildExecEnv(),
+        }).stdout.trim();
+        if (found && fs.existsSync(found)) return found;
+      } catch {}
+    }
   }
   const home = os.homedir();
-  const candidates = [
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-    path.join(home, ".npm-global", "bin", "claude"),
-    path.join(home, "workspace", ".npm-global", "bin", "claude"),
-    path.join(home, ".local", "bin", "claude"),
-    path.join(home, ".bun", "bin", "claude"),
-    path.join(home, ".cargo", "bin", "claude")
-  ];
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) return p;
-    } catch {}
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    const localAppdata = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    const winDirs = [
+      path.join(appdata, "npm"),
+      path.join(home, ".npm-global", "bin"),
+      path.join(localAppdata, "Microsoft", "WinGet", "Packages")
+    ];
+    const found = findBinaryInDirs(winDirs, "claude", [".exe", ".cmd", ".bat", ""]);
+    if (found) return found;
+  } else {
+    const candidates = [
+      "/opt/homebrew/bin/claude",
+      "/usr/local/bin/claude",
+      path.join(home, ".npm-global", "bin", "claude"),
+      path.join(home, "workspace", ".npm-global", "bin", "claude"),
+      path.join(home, ".local", "bin", "claude"),
+      path.join(home, ".bun", "bin", "claude"),
+      path.join(home, ".cargo", "bin", "claude")
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) return p;
+      } catch {}
+    }
   }
   return "claude";
 }
@@ -139,34 +188,50 @@ function detectBinaryForTool(toolDef) {
   }
   const candidates = Array.isArray(toolDef.binaryCandidates) ? toolDef.binaryCandidates : [];
   for (const bin of candidates) {
-    for (const shell of ["zsh", "bash"]) {
-      try {
-        const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
-        if (!shellPath) continue;
-        const found = spawnSync(shellPath, ["-lc", `command -v ${bin} 2>/dev/null || true`], {
-          encoding: "utf8",
-          env: buildExecEnv(),
-        }).stdout.trim();
-        if (found && fs.existsSync(found)) return { found: true, path: found };
-      } catch {}
+    if (process.platform !== "win32") {
+      for (const shell of ["zsh", "bash"]) {
+        try {
+          const shellPath = spawnSync("which", [shell], { encoding: "utf8" }).stdout.trim();
+          if (!shellPath) continue;
+          const found = spawnSync(shellPath, ["-lc", `command -v ${bin} 2>/dev/null || true`], {
+            encoding: "utf8",
+            env: buildExecEnv(),
+          }).stdout.trim();
+          if (found && fs.existsSync(found)) return { found: true, path: found };
+        } catch {}
+      }
     }
   }
   const home = os.homedir();
-  const pathDirs = [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    path.join(home, ".npm-global", "bin"),
-    path.join(home, "workspace", ".npm-global", "bin"),
-    path.join(home, ".local", "bin"),
-    path.join(home, ".bun", "bin"),
-    path.join(home, ".cargo", "bin"),
-  ];
-  for (const bin of candidates) {
-    for (const dir of pathDirs) {
-      const p = path.join(dir, bin);
-      try {
-        if (fs.existsSync(p)) return { found: true, path: p };
-      } catch {}
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    const localAppdata = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    const winDirs = [
+      path.join(appdata, "npm"),
+      path.join(home, ".npm-global", "bin"),
+      path.join(localAppdata, "Microsoft", "WinGet", "Packages")
+    ];
+    for (const bin of candidates) {
+      const found = findBinaryInDirs(winDirs, bin, [".exe", ".cmd", ".bat", ""]);
+      if (found) return { found: true, path: found };
+    }
+  } else {
+    const pathDirs = [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      path.join(home, ".npm-global", "bin"),
+      path.join(home, "workspace", ".npm-global", "bin"),
+      path.join(home, ".local", "bin"),
+      path.join(home, ".bun", "bin"),
+      path.join(home, ".cargo", "bin"),
+    ];
+    for (const bin of candidates) {
+      for (const dir of pathDirs) {
+        const p = path.join(dir, bin);
+        try {
+          if (fs.existsSync(p)) return { found: true, path: p };
+        } catch {}
+      }
     }
   }
   return { found: false, path: "" };

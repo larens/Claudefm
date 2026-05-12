@@ -44,27 +44,58 @@ def resolve_template_path(input_path):
 
 def build_exec_env():
     home = os.path.expanduser("~")
+    sep = os.pathsep
     extras = [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-        "/usr/sbin",
-        "/sbin",
         os.path.join(home, ".npm-global", "bin"),
         os.path.join(home, ".local", "bin"),
         os.path.join(home, ".bun", "bin"),
         os.path.join(home, ".cargo", "bin"),
     ]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        extras += [
+            os.path.join(appdata, "npm"),
+            os.path.join(local_appdata, "Microsoft", "WinGet", "Packages"),
+        ]
+    else:
+        extras += [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
     current = os.environ.get("PATH", "")
     merged = []
-    for p in extras + current.split(":"):
+    for p in extras + current.split(sep):
         if p and p not in merged:
             merged.append(p)
     env = dict(os.environ)
     env["HOME"] = os.environ.get("HOME", home)
-    env["PATH"] = ":".join(merged)
+    env["PATH"] = sep.join(merged)
     return env
+
+def _find_binary_in_dirs(dirs, bin_name, extensions=("",)):
+    """Search for a binary in a list of directories, optionally recursing into subdirs."""
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for ext in extensions:
+            p = os.path.join(d, bin_name + ext)
+            if os.path.isfile(p):
+                return p
+        try:
+            for entry in os.scandir(d):
+                if entry.is_dir():
+                    for ext in extensions:
+                        p = os.path.join(entry.path, bin_name + ext)
+                        if os.path.isfile(p):
+                            return p
+        except OSError:
+            pass
+    return ""
 
 def find_claude_binary():
     env_bin = os.environ.get("CLAUDE_BIN") or os.environ.get("CLAUDE_PATH")
@@ -73,36 +104,48 @@ def find_claude_binary():
     which = shutil.which("claude")
     if which:
         return which
-    for shell in ("zsh", "bash"):
-        shell_path = shutil.which(shell)
-        if not shell_path:
-            continue
-        try:
-            result = subprocess.run(
-                [shell_path, "-lc", "command -v claude 2>/dev/null || true"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                env=build_exec_env(),
-            )
-            candidate = str(result.stdout or "").strip()
-            if candidate and os.path.isfile(candidate):
-                return candidate
-        except Exception:
-            pass
+    if sys.platform != "win32":
+        for shell in ("zsh", "bash"):
+            shell_path = shutil.which(shell)
+            if not shell_path:
+                continue
+            try:
+                result = subprocess.run(
+                    [shell_path, "-lc", "command -v claude 2>/dev/null || true"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=5,
+                    env=build_exec_env(),
+                )
+                candidate = str(result.stdout or "").strip()
+                if candidate and os.path.isfile(candidate):
+                    return candidate
+            except Exception:
+                pass
     home = os.path.expanduser("~")
-    candidates = [
-        "/opt/homebrew/bin/claude",
-        "/usr/local/bin/claude",
-        os.path.join(home, ".npm-global", "bin", "claude"),
-        os.path.join(home, "workspace", ".npm-global", "bin", "claude"),
-        os.path.join(home, ".local", "bin", "claude"),
-        os.path.join(home, ".bun", "bin", "claude"),
-        os.path.join(home, ".cargo", "bin", "claude"),
-    ]
-    for p in candidates:
-        if os.path.isfile(p):
-            return p
+    if sys.platform == "win32":
+        win_dirs = [
+            os.path.join(os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming"), "npm"),
+            os.path.join(home, ".npm-global", "bin"),
+            os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "Microsoft", "WinGet", "Packages"),
+        ]
+        found = _find_binary_in_dirs(win_dirs, "claude", extensions=(".exe", ".cmd", ".bat", ""))
+        if found:
+            return found
+    else:
+        candidates = [
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+            os.path.join(home, ".npm-global", "bin", "claude"),
+            os.path.join(home, "workspace", ".npm-global", "bin", "claude"),
+            os.path.join(home, ".local", "bin", "claude"),
+            os.path.join(home, ".bun", "bin", "claude"),
+            os.path.join(home, ".cargo", "bin", "claude"),
+        ]
+        for p in candidates:
+            if os.path.isfile(p):
+                return p
     return ""
 
 # ---------------------------------------------------------------------------
@@ -120,34 +163,47 @@ def detect_binary_for_tool(tool_def):
         which = shutil.which(bin_name)
         if which:
             return {"found": True, "path": which}
-        for shell in ("zsh", "bash"):
-            shell_path = shutil.which(shell)
-            if not shell_path:
-                continue
-            try:
-                result = subprocess.run(
-                    [shell_path, "-lc", f"command -v {bin_name} 2>/dev/null || true"],
-                    capture_output=True, text=True, timeout=5, env=build_exec_env(),
-                )
-                found = str(result.stdout or "").strip()
-                if found and os.path.isfile(found):
-                    return {"found": True, "path": found}
-            except Exception:
-                pass
+        if sys.platform != "win32":
+            for shell in ("zsh", "bash"):
+                shell_path = shutil.which(shell)
+                if not shell_path:
+                    continue
+                try:
+                    result = subprocess.run(
+                        [shell_path, "-lc", f"command -v {bin_name} 2>/dev/null || true"],
+                        capture_output=True, text=True, encoding="utf-8",
+                        timeout=5, env=build_exec_env(),
+                    )
+                    found = str(result.stdout or "").strip()
+                    if found and os.path.isfile(found):
+                        return {"found": True, "path": found}
+                except Exception:
+                    pass
     home = os.path.expanduser("~")
-    path_dirs = [
-        "/opt/homebrew/bin", "/usr/local/bin",
-        os.path.join(home, ".npm-global", "bin"),
-        os.path.join(home, "workspace", ".npm-global", "bin"),
-        os.path.join(home, ".local", "bin"),
-        os.path.join(home, ".bun", "bin"),
-        os.path.join(home, ".cargo", "bin"),
-    ]
-    for bin_name in candidates:
-        for d in path_dirs:
-            p = os.path.join(d, bin_name)
-            if os.path.isfile(p):
-                return {"found": True, "path": p}
+    if sys.platform == "win32":
+        win_dirs = [
+            os.path.join(os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming"), "npm"),
+            os.path.join(home, ".npm-global", "bin"),
+            os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "Microsoft", "WinGet", "Packages"),
+        ]
+        for bin_name in candidates:
+            found = _find_binary_in_dirs(win_dirs, bin_name, extensions=(".exe", ".cmd", ".bat", ""))
+            if found:
+                return {"found": True, "path": found}
+    else:
+        path_dirs = [
+            "/opt/homebrew/bin", "/usr/local/bin",
+            os.path.join(home, ".npm-global", "bin"),
+            os.path.join(home, "workspace", ".npm-global", "bin"),
+            os.path.join(home, ".local", "bin"),
+            os.path.join(home, ".bun", "bin"),
+            os.path.join(home, ".cargo", "bin"),
+        ]
+        for bin_name in candidates:
+            for d in path_dirs:
+                p = os.path.join(d, bin_name)
+                if os.path.isfile(p):
+                    return {"found": True, "path": p}
     return {"found": False, "path": ""}
 
 def detect_app_for_tool(tool_def):
@@ -278,6 +334,7 @@ def get_claude_model_flag():
             [claude_path, "--help"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=4,
             env=build_exec_env(),
         )
@@ -448,6 +505,7 @@ def run_claude_with_optional_model(prompt, schema, model):
             args,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout_seconds,
             env=build_exec_env(),
         )
@@ -591,7 +649,7 @@ def build_lyric_interlude_prompt(input_data, tracks_with_lyrics):
 
     instructions = [
         f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
-        "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
+        "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲“。",
         "要求：",
         "- 只输出 JSON，字段遵循 schema（只有 text）。",
         "- text 是可直接口播的一段话，约 120-220 个汉字。",
@@ -1035,7 +1093,7 @@ def parse_tracks_loose(text, max_tracks=5000):
         patterns = [
             r"^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$",
             r"^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$",
-            r'^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$',
+            r'^\s*[""](.+?)["“]\s*[-–—]\s*["”](.+?)[""]\s*$',
             r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|",
             r"^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$",
         ]
@@ -1266,54 +1324,54 @@ def apply_memory(profile_summary, memory):
     return "\n".join(lines[-200:])
 
 def build_chat_only_prompt(input_data):
-    dj_raw = input_data.get(“djName”, “Claudio”)
-    dj = str(dj_raw).replace(“\n”, “ “).replace(“\r”, “ “).strip()[:24]
+    dj_raw = input_data.get("djName", "Claudio")
+    dj = str(dj_raw).replace("\n", " \u201c).replace(\u201d\r", " ").strip()[:24]
     if not dj:
-        dj = “Claudio”
-    profile = input_data.get(“profileSummary”, “”)
+        dj = "Claudio"
+    profile = input_data.get("profileSummary", "")
 
     instructions = [
-        f”你是 Claudefm 的 DJ {dj}。回复必须是中文。”,
-        “你的任务：根据用户消息进行简短友好的对话回应。”,
-        “风格：电台 DJ，亲切自然，简洁有温度。”,
-        “禁止推荐歌单，只做对话回应。”,
-        “memory 用于写回画像偏好（可选，1-2 条）。”,
+        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
+        "你的任务：根据用户消息进行简短友好的对话回应。",
+        "风格：电台 DJ，亲切自然，简洁有温度。",
+        "禁止推荐歌单，只做对话回应。",
+        "memory 用于写回画像偏好（可选，1-2 条）。",
     ]
 
-    return “\n”.join([
-        “\n”.join(instructions),
-        “”,
-        “【画像摘要】”,
-        profile or “(空)”,
-        “”,
-        “【用户消息】”,
-        input_data.get(“text”, “”)
+    return "\n".join([
+        "\n".join(instructions),
+        "",
+        "【画像摘要】",
+        profile or "(空)",
+        "",
+        "【用户消息】",
+        input_data.get("text", "")
     ])
 
 def build_prompt(input_data):
-    dj_raw = input_data.get(“djName”, “Claudio”)
-    dj = str(dj_raw).replace(“\n”, “ “).replace(“\r”, “ “).strip()[:24]
+    dj_raw = input_data.get("djName", "Claudio")
+    dj = str(dj_raw).replace("\n", " ").replace("\r", " ").strip()[:24]
     if not dj:
-        dj = “Claudio”
-    provider = input_data.get(“provider”, “qq”)
-    profile = input_data.get(“profileSummary”, “”)
-    scene = input_data.get(“scene”, “”)
-    force = input_data.get(“forceProfileRefresh”, False)
-    force_recommend = bool(input_data.get(“forceRecommend”, False))
+        dj = "Claudio"
+    provider = input_data.get("provider", "qq")
+    profile = input_data.get("profileSummary", "")
+    scene = input_data.get("scene", "")
+    force = input_data.get("forceProfileRefresh", False)
+    force_recommend = bool(input_data.get("forceRecommend", False))
     try:
-        list_md = read_list_file(max_chars=6000).get(“content”, “”)
+        list_md = read_list_file(max_chars=6000).get("content", "")
     except Exception:
-        list_md = “”
+        list_md = ""
     try:
         mem_md = read_music_memory_file()
     except Exception:
-        mem_md = “”
+        mem_md = ""
 
     liked = []
     disliked = []
     try:
-        liked = input_data.get(“likedTracks”, []) if isinstance(input_data.get(“likedTracks”, []), list) else []
-        disliked = input_data.get(“dislikedTracks”, []) if isinstance(input_data.get(“dislikedTracks”, []), list) else []
+        liked = input_data.get("likedTracks", []) if isinstance(input_data.get("likedTracks", []), list) else []
+        disliked = input_data.get("dislikedTracks", []) if isinstance(input_data.get("dislikedTracks", []), list) else []
     except Exception:
         liked = []
         disliked = []
@@ -1323,59 +1381,118 @@ def build_prompt(input_data):
         for t in items[:limit]:
             if not isinstance(t, dict):
                 continue
-            name = str(t.get(“name”, “”) or “”).strip()
-            artist = str(t.get(“artist”, “”) or “”).strip()
+            name = str(t.get("name", "") or "").strip()
+            artist = str(t.get("artist", "") or "").strip()
             if not name or not artist:
                 continue
-            out.append(f”- {name} - {artist}”)
-        return “\n”.join(out)
+            out.append(f"- {name} - {artist}")
+        return "\n".join(out)
 
     instructions = [
-        f”你是 Claudefm 的 DJ {dj}。回复必须是中文。”,
-        “你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。”,
-        f”当前音源来源偏好：{provider}。”,
-        “必须输出 JSON，字段遵循给定 schema。”,
-        “无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。”,
-        “当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来”可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。”,
-        “确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如”要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。”,
-        “当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。”,
-        “当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。”,
-        “当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。”,
-        “当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。”,
-        “强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。”,
-        “偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。”,
-        “每首歌只输出 name/artist；album/query/provider 可选。”,
-        “memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。”,
+        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
+        "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
+        f"当前音源来源偏好：{provider}。",
+        "必须输出 JSON，字段遵循给定 schema。",
+        "无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。",
+        "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
+        "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
+        "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
+        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
+        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
+        "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
+        "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
+        "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
+        "每首歌只输出 name/artist；album/query/provider 可选。",
+        "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
     ]
     if force:
-        instructions.append(“这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。”)
+        instructions.append("这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。")
 
-    return “\n”.join([
-        “\n”.join(instructions),
-        “”,
-        “【forceRecommend】”,
-        “true” if force_recommend else “false”,
-        “”,
-        “【likedTracks（赞）】”,
-        fmt_track_lines(liked) or “(空)”,
-        “”,
-        “【dislikedTracks（踩）】”,
-        fmt_track_lines(disliked) or “(空)”,
-        “”,
-        “【历史播放歌单（list.md 摘要）】”,
-        str(list_md or “”).strip() or “(空)”,
-        “”,
-        “【历史记忆文件（music.md 摘要）】”,
-        str(mem_md or “”).strip() or “(空)”,
-        “”,
-        “【画像摘要】”,
-        profile or “(空)”,
-        “”,
-        “【场景信息】”,
-        scene or “(空)”,
-        “”,
-        “【用户消息】”,
-        input_data.get(“text”, “”)
+    return "\n".join([
+        "\n".join(instructions),
+        "",
+        "【forceRecommend】",
+        "true" if force_recommend else "false",
+        "",
+        "【likedTracks（赞）】",
+        fmt_track_lines(liked) or "(空)",
+        "",
+        "【dislikedTracks（踩）】",
+        fmt_track_lines(disliked) or "(空)",
+        "",
+        "【历史播放歌单（list.md 摘要）】",
+        str(list_md or "").strip() or "(空)",
+        "",
+        "【历史记忆文件（music.md 摘要）】",
+        str(mem_md or "").strip() or "(空)",
+        "",
+        "【画像摘要】",
+        profile or "(空)",
+        "",
+        "【场景信息】",
+        scene or "(空)",
+        "",
+        "【用户消息】",
+        input_data.get("text", "")
+    ])
+    def fmt_track_lines(items, limit=20):
+        out = []
+        for t in items[:limit]:
+            if not isinstance(t, dict):
+                continue
+            name = str(t.get("name", "") or "").strip()
+            artist = str(t.get("artist", "") or "").strip()
+            if not name or not artist:
+                continue
+            out.append(f"- {name} - {artist}")
+        return "\n".join(out)
+
+    instructions = [
+        f"你是 Claudefm 的 DJ {dj}。回复必须是中文。",
+        "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
+        f"当前音源来源偏好：{provider}。",
+        "必须输出 JSON，字段遵循给定 schema。",
+        "无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。",
+        "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
+        "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？“），并且 play 输出空数组、segue 输出空字符串。",
+        "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
+        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
+        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
+        "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
+        "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
+        "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
+        "每首歌只输出 name/artist；album/query/provider 可选。",
+        "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
+    ]
+    if force:
+        instructions.append("这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。")
+
+    return "\n".join([
+        "\n".join(instructions),
+        "",
+        "【forceRecommend】",
+        "true" if force_recommend else "false",
+        "",
+        "【likedTracks（赞）】",
+        fmt_track_lines(liked) or "(空)",
+        "",
+        "【dislikedTracks（踩）】",
+        fmt_track_lines(disliked) or "(空)",
+        "",
+        "【历史播放歌单（list.md 摘要）】",
+        str(list_md or "").strip() or "(空)",
+        "",
+        "【历史记忆文件（music.md 摘要）】",
+        str(mem_md or "").strip() or "(空)",
+        "",
+        "【画像摘要】",
+        profile or "(空)",
+        "",
+        "【场景信息】",
+        scene or "(空)",
+        "",
+        "【用户消息】",
+        input_data.get("text", "")
     ])
 
 def parse_songs_from_text(text):
@@ -1439,6 +1556,7 @@ def run_claude(prompt, schema):
             args,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout_seconds,
             env=build_exec_env(),
         )
@@ -1542,7 +1660,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
     summary = str(profile_summary or "").strip()
 
     prompt = "\n".join([
-        "你是一个音乐偏好画像整理器。请把“现有记忆”整理为严格遵循“模板”的 Markdown 文档。",
+        "你是一个音乐偏好画像整理器。请把\"现有记忆\"整理为严格遵循\"模板\"的 Markdown 文档。",
         "要求：",
         "1) 输出必须是 Markdown，且结构与标题层级必须与模板一致。",
         "2) 充分利用现有记忆信息补全模板中能补全的字段；无法确定的保持为空或占位符。",
@@ -1570,6 +1688,7 @@ def optimize_memory_file(dj_name, profile_summary, template_path):
             args,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout_seconds,
             env=build_exec_env(),
         )
