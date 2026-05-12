@@ -13,6 +13,7 @@ else
 fi
 LOG_FILE="${LOG_DIR}/ClaudefmHost.log"
 mkdir -p "${LOG_DIR}" >/dev/null 2>&1 || true
+echo "[$(date)] claudefm-host.sh invoked, DIR=${DIR}, PATH=${PATH}" >>"${LOG_FILE}"
 
 if [ -z "${CLAUDE_BIN:-}" ]; then
   if command -v claude >/dev/null 2>&1; then
@@ -27,15 +28,6 @@ if [ -z "${CLAUDE_BIN:-}" ]; then
 fi
 export CLAUDE_BIN
 
-PY_BIN="${PY_BIN:-}"
-if [ -z "${PY_BIN}" ]; then
-  if command -v python3 >/dev/null 2>&1; then PY_BIN="$(command -v python3)"; fi
-fi
-
-if [ -n "${PY_BIN}" ] && [ -f "${DIR}/host.py" ]; then
-  exec "${PY_BIN}" "${DIR}/host.py" 2>>"${LOG_FILE}"
-fi
-
 NODE_BIN="${NODE_BIN:-}"
 if [ -z "${NODE_BIN}" ]; then
   if command -v node >/dev/null 2>&1; then NODE_BIN="$(command -v node)"; fi
@@ -44,9 +36,20 @@ if [ -z "${NODE_BIN}" ] && [ -x "/opt/homebrew/bin/node" ]; then NODE_BIN="/opt/
 if [ -z "${NODE_BIN}" ] && [ -x "/usr/local/bin/node" ]; then NODE_BIN="/usr/local/bin/node"; fi
 if [ -z "${NODE_BIN}" ] && [ -x "/usr/bin/node" ]; then NODE_BIN="/usr/bin/node"; fi
 
-if [ -z "${NODE_BIN}" ]; then
-  echo "ClaudefmHost: node not found. Please install Node.js (>=18) and retry." 1>&2
-  exit 127
+if [ -n "${NODE_BIN}" ] && [ -f "${DIR}/host.cjs" ]; then
+  echo "[$(date)] Using Node: ${NODE_BIN}" >>"${LOG_FILE}"
+  exec "${NODE_BIN}" "${DIR}/host.cjs" 2>>"${LOG_FILE}"
 fi
 
-exec "${NODE_BIN}" "${DIR}/host.cjs" 2>>"${LOG_FILE}"
+PY_BIN="${PY_BIN:-}"
+if [ -z "${PY_BIN}" ]; then
+  if command -v python3 >/dev/null 2>&1; then PY_BIN="$(command -v python3)"; fi
+fi
+
+if [ -n "${PY_BIN}" ] && [ -f "${DIR}/host.py" ]; then
+  echo "[$(date)] Using Python: ${PY_BIN}" >>"${LOG_FILE}"
+  exec "${PY_BIN}" "${DIR}/host.py" 2>>"${LOG_FILE}"
+fi
+
+echo "ClaudefmHost: neither node nor python3 found." 1>&2
+exit 127

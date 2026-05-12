@@ -1635,6 +1635,7 @@ def ensure_music_file(template_path):
     return {"ok": True, "path": file_path, "created": True}
 
 def main():
+    import sys; print(f"[host.py] started with {sys.executable}", file=sys.stderr)
     while True:
         msg = read_message()
         if not msg:
@@ -1844,6 +1845,7 @@ def main():
                 resp = read_memory_file()
                 send_message(resp)
             except Exception as e:
+                import traceback; print(f"[readMemoryFile error] {e}\n{traceback.format_exc()}", file=sys.stderr)
                 send_message({"ok": False, "error": str(e)})
             continue
         if mtype == "readListFile":
@@ -1851,6 +1853,7 @@ def main():
                 resp = read_list_file()
                 send_message(resp)
             except Exception as e:
+                import traceback; print(f"[readListFile error] {e}\n{traceback.format_exc()}", file=sys.stderr)
                 send_message({"ok": False, "error": str(e)})
             continue
         if mtype == "importListTracks":
