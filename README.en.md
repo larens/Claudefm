@@ -7,6 +7,8 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 - Chat and recommendations: via Native Messaging to your local Claude Code CLI
 - Local data: stored by the host on disk, while extension state stays in `chrome.storage.local`
 
+<img src="https://github.com/larens/Claudefm/blob/main/docs/superpowers/specs/demo.png?raw=true" alt="Demo">
+
 ## Repo Layout
 
 - `extension/`: Chrome extension and Side Panel UI

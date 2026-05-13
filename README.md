@@ -7,6 +7,9 @@ Claudefm 是一个 Chromium Side Panel 扩展，把”DJ 对话 + 歌单推荐 +
 - 对话与推荐：通过 Native Messaging 调用本机 Claude Code CLI
 - 本地数据：Host 落盘到本机目录，扩展状态保存在 `chrome.storage.local`
 
+<img src="https://github.com/larens/Claudefm/blob/main/docs/superpowers/specs/demo.png?raw=true" alt="Demo">
+
+
 ## 仓库结构
 
 - `extension/`：Chrome 扩展与 Side Panel UI
