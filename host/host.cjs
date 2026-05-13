@@ -2,6 +2,7 @@
 const { spawn, spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { AI_TOOLS, getToolById } = require("./ai-tools.cjs");
@@ -907,6 +908,54 @@ function getCachedTts(text) {
   }
 }
 
+let ttsServerPort = 0;
+let ttsServerStarting = null;
+
+function ensureTtsServer() {
+  if (ttsServerPort) return Promise.resolve(ttsServerPort);
+  if (ttsServerStarting) return ttsServerStarting;
+  ttsServerStarting = new Promise((resolve) => {
+    try {
+      const server = http.createServer((req, res) => {
+        const url = new URL(req.url, `http://127.0.0.1`);
+        const hash = url.pathname.replace(/^\/tts\//, "").replace(/[^a-f0-9]/gi, "");
+        if (!hash) { res.writeHead(404); res.end(); return; }
+        const folders = ensureCacheFolders();
+        const filePath = path.join(folders.tts, `${hash}.mp3`);
+        if (!fs.existsSync(filePath)) { res.writeHead(404); res.end(); return; }
+        try {
+          const buf = fs.readFileSync(filePath);
+          const isWav = buf.length > 4 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+          res.writeHead(200, {
+            "Content-Type": isWav ? "audio/wav" : "audio/mpeg",
+            "Content-Length": buf.length,
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(buf);
+        } catch {
+          res.writeHead(500); res.end();
+        }
+      });
+      server.listen(0, "127.0.0.1", () => {
+        ttsServerPort = server.address().port;
+        console.error(`[tts] audio server listening on 127.0.0.1:${ttsServerPort}`);
+        resolve(ttsServerPort);
+      });
+    } catch (e) {
+      console.error(`[tts] failed to start audio server: ${e.message}`);
+      ttsServerStarting = null;
+      resolve(0);
+    }
+  });
+  return ttsServerStarting;
+}
+
+async function getTtsServerUrl(hash) {
+  const port = await ensureTtsServer();
+  if (!port) return "";
+  return `http://127.0.0.1:${port}/tts/${hash}`;
+}
+
 function normalizeTrackKey(name, artist) {
   const strip = (v) =>
     String(v || "")
@@ -1754,11 +1803,13 @@ readNativeMessageStream(async (msg) => {
         return;
       }
 
-      // 1) 缓存命中
+      // 1) 缓存命中 — 通过本地 HTTP 服务返回 URL，避免 native messaging 大小限制
       const cached = getCachedTts(text);
       if (cached.ok && cached.hit) {
-        console.error(`[tts] cache hit for text=${text.slice(0, 40)}`);
-        sendNativeMessage({ ok: true, audio: cached.audio, provider: "cache", path: cached.path || "" });
+        const hash = sha1Hex(text);
+        const serverUrl = await getTtsServerUrl(hash);
+        console.error(`[tts] cache hit for text=${text.slice(0, 40)}, url=${serverUrl}`);
+        sendNativeMessage({ ok: true, audioUrl: serverUrl, provider: "cache", path: cached.path || "" });
         return;
       }
 

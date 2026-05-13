@@ -291,13 +291,23 @@ function buildInterludeItem(text, tracks) {
   };
 }
 
-function buildSegueItem(text) {
-  return {
+function buildSegueItem(text, ttsAudioUrl) {
+  const item = {
     kind: "speech",
     name: "DJ 推荐语",
     artist: "",
     text: String(text || "").trim(),
   };
+  if (ttsAudioUrl) item.ttsAudioUrl = ttsAudioUrl;
+  return item;
+}
+
+async function requestTtsAudioUrl(text) {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "tts", text: String(text || "").trim() });
+    if (resp?.ok && resp.audioUrl) return resp.audioUrl;
+  } catch {}
+  return "";
 }
 
 async function getPreferences() {
@@ -429,7 +439,9 @@ function showRecommendPush(tracks, defaultSegue) {
     segueSpokenInQueue = 0;
     const next = [];
     const text = String(segueText || "").trim();
-    if (text) next.push(buildSegueItem(text));
+    let ttsAudioUrl = "";
+    if (text) ttsAudioUrl = await requestTtsAudioUrl(text);
+    if (text) next.push(buildSegueItem(text, ttsAudioUrl));
     next.push(
       ...list.map((t) => ({
         ...t,
@@ -1534,8 +1546,10 @@ async function handleAssistantResult(result) {
       segueSpokenInQueue = 0;
       const nextItems = [];
       const segueText = result.segue ? String(result.segue).trim() : "";
+      let ttsAudioUrl = "";
+      if (segueText) ttsAudioUrl = await requestTtsAudioUrl(segueText);
       if (segueText) {
-        nextItems.push(buildSegueItem(segueText));
+        nextItems.push(buildSegueItem(segueText, ttsAudioUrl));
         segueSpokenInQueue += 1;
       }
       nextItems.push(
@@ -1687,16 +1701,16 @@ elAvatarFile.addEventListener("change", async () => {
 
 
 elBtnQueue.addEventListener("click", () => {
-  elQueue.hidden = !elQueue.hidden;
+  elQueue.classList.toggle("open");
 });
 
 window.addEventListener("click", (e) => {
-  if (!elQueue || elQueue.hidden) return;
+  if (!elQueue || !elQueue.classList.contains("open")) return;
   const t = e?.target;
   if (!t) return;
   if (elQueue.contains(t)) return;
   if (elBtnQueue && elBtnQueue.contains(t)) return;
-  elQueue.hidden = true;
+  elQueue.classList.remove("open");
 });
 
 elBtnPlay.addEventListener("click", async () => {
@@ -2059,3 +2073,46 @@ safePost({ type: "ready" });
     else void clearSavedSession();
   });
 })();
+
+// Wave animation
+{
+  const wrap = document.getElementById("waveWrap");
+  if (wrap) {
+    const BAR_COUNT = 58;
+    const MAX_HEIGHT = 120;
+    const MIN_HEIGHT = 3;
+    const FLOW_SPEED = 170;
+    const CENTER_WEIGHT = 0.7;
+    const WAVE_RAND_RANGE = 0.85;
+    const bars = [];
+    const waveData = [];
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const el = document.createElement("div");
+      el.className = "bar";
+      wrap.appendChild(el);
+      bars.push(el);
+      waveData.push(MIN_HEIGHT);
+    }
+    function getVoiceHeight(pos) {
+      const mid = BAR_COUNT / 2;
+      const dist = Math.abs(pos - mid) / mid;
+      const envelope = 1 - dist * CENTER_WEIGHT;
+      let base = 0.2 + Math.random() * WAVE_RAND_RANGE;
+      let h = MAX_HEIGHT * base * envelope;
+      return Math.max(MIN_HEIGHT, h);
+    }
+    function flowWave() {
+      for (let i = 0; i < BAR_COUNT - 1; i++) {
+        waveData[i] = waveData[i + 1] * 0.88;
+      }
+      waveData[BAR_COUNT - 1] = getVoiceHeight(BAR_COUNT - 1);
+      for (let i = 0; i < BAR_COUNT; i++) {
+        if (Math.random() > 0.65) {
+          waveData[i] = getVoiceHeight(i);
+        }
+        bars[i].style.height = waveData[i] + "px";
+      }
+    }
+    setInterval(flowWave, FLOW_SPEED);
+  }
+}

@@ -56,10 +56,15 @@ body {
 
 .top {
   display: flex;
+  flex-direction: column;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--borderSoft);
+}
+
+.topRow {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--borderSoft);
 }
 
 .brand {
@@ -98,7 +103,7 @@ body {
   box-shadow: -12px 0 30px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
   padding: 12px 12px;
 }
 
@@ -118,7 +123,6 @@ body {
 .memoryStatus {
   font-size: 12px;
   color: var(--muted);
-  min-height: 1.2em;
 }
 
 .memoryContent {
@@ -664,11 +668,15 @@ button:hover {
 }
 
 .queue {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 240ms ease;
+}
+
+.queue.open {
   max-height: 40vh;
   overflow: auto;
-  border-top: 1px solid var(--borderSoft);
-  border-bottom: 1px solid var(--borderSoft);
-  padding: 10px 12px;
+  padding: 10px 0;
 }
 
 .dock {
@@ -828,9 +836,27 @@ button:hover {
   border-color: rgba(255, 59, 48, 0.35);
 }
 
+.wave-wrap {
+  display: flex;
+  align-items: flex-end;
+  height: 120px;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.wave-wrap .bar {
+  flex: 1;
+  min-width: 0;
+  min-height: 3px;
+  height: 3px;
+  background: color-mix(in srgb, CanvasText 20%, Canvas 85%);
+  border-radius: 2px;
+  transition: height 0.3s ease;
+  will-change: height;
+}
+
 .player {
-  margin: 0;
-  padding: 0 0 10px;
+  padding: 0 0 10px 0;
   border: none;
   background: transparent;
   border-radius: 0;
@@ -840,10 +866,11 @@ button:hover {
 .playerMain {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .playerHeader {
+  margin: 8px 0 8px 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -851,6 +878,7 @@ button:hover {
 }
 
 .playerControls {
+  margin: 10px 0 4px 0;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -969,11 +997,6 @@ button:hover {
   font-size: 12px;
   opacity: 0.8;
   margin-top: 8px;
-}
-
-.composer {
-  padding: 10px 0 0;
-  border-top: 1px solid color-mix(in srgb, var(--borderSoft) 85%, transparent);
 }
 
 .composerBar {

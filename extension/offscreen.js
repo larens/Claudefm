@@ -117,9 +117,17 @@ async function requestTtsAudio(text) {
   try {
     console.log("[offscreen] requestTtsAudio sending, text=" + text.slice(0, 40));
     const resp = await chrome.runtime.sendMessage({ type: "tts", text });
-    console.log("[offscreen] requestTtsAudio response:", JSON.stringify({ ok: resp?.ok, provider: resp?.provider, error: resp?.error, hasAudio: !!(resp?.audio?.base64) }));
-    if (resp && resp.ok && resp.audio && resp.audio.base64) {
-      return resp.audio;
+    console.log("[offscreen] requestTtsAudio response:", JSON.stringify({ ok: resp?.ok, provider: resp?.provider, error: resp?.error, hasAudio: !!(resp?.audio?.base64), hasUrl: !!resp?.audioUrl }));
+    if (resp && resp.ok) {
+      if (resp.audioUrl) {
+        const fetched = await fetch(resp.audioUrl);
+        if (!fetched.ok) return null;
+        const blob = await fetched.blob();
+        return { blob };
+      }
+      if (resp.audio && resp.audio.base64) {
+        return resp.audio;
+      }
     }
   } catch (e) {
     console.log("[offscreen] requestTtsAudio error:", e?.message || e);
@@ -127,13 +135,49 @@ async function requestTtsAudio(text) {
   return null;
 }
 
+async function playTtsFromUrl(audioUrl, token) {
+  try {
+    const resp = await fetch(audioUrl);
+    if (!resp.ok) return false;
+    if (token !== playRequestToken) return true;
+    const blob = await resp.blob();
+    if (!blob.size) return false;
+    const url = URL.createObjectURL(blob);
+    const el = new Audio();
+    el.preload = "auto";
+    el.src = url;
+
+    let played = false;
+    await emitState("speech:start");
+    await new Promise((resolve) => {
+      el.oncanplaythrough = () => {
+        el.play().then(() => { played = true; }).catch(() => {}).finally(() => resolve());
+      };
+      el.onerror = () => resolve();
+      setTimeout(() => resolve(), 5000);
+    });
+    if (!played) {
+      try { URL.revokeObjectURL(url); } catch {}
+      return false;
+    }
+    await new Promise((resolve) => {
+      el.onended = () => resolve();
+      el.onerror = () => resolve();
+    });
+    try { URL.revokeObjectURL(url); } catch {}
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function playTtsAudio(text, token) {
   const audio = await requestTtsAudio(text);
   if (!audio) return false;
   if (token !== playRequestToken) return true;
 
-  const blob = base64ToBlob(audio.base64, audio.mime);
-  if (!blob.size) return false;
+  const blob = audio.blob || base64ToBlob(audio.base64, audio.mime);
+  if (!blob || !blob.size) return false;
   const url = URL.createObjectURL(blob);
   const el = new Audio();
   el.preload = "auto";
@@ -332,8 +376,12 @@ async function playAt(index) {
     speechPaused = false;
     schedulePreloadForNextTrack();
 
-    // 使用 MiMo TTS 生成的音频文件播放推荐语
-    await playTtsAudio(text, token);
+    // 使用预生成的 TTS 音频 URL 或按需生成
+    if (track.ttsAudioUrl) {
+      await playTtsFromUrl(track.ttsAudioUrl, token);
+    } else {
+      await playTtsAudio(text, token);
+    }
     if (token !== playRequestToken) return snapshotState();
 
     speechActive = false;
