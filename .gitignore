@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 host/runtime-config.json
 host/com.claudiofm.host.json
+tts-config.json

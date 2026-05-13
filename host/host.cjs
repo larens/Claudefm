@@ -419,7 +419,7 @@ function buildSchema() {
           required: ["name", "artist"]
         }
       },
-      segue: { type: "string" },
+      segue: { type: "string", description: "电台 DJ 推荐语，100-200字，包含开场问候、推荐理由、歌曲亮点、情感共鸣、自然过渡" },
       memory: {
         type: "array",
         items: {
@@ -488,8 +488,8 @@ function buildPrompt(input) {
     "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
     "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
     "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-    "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
-    "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
+    "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
+    "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
     "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
     "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
     "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
@@ -766,9 +766,11 @@ function ensureCacheFolders() {
   const base = getCacheFolder();
   const tracks = path.join(base, "tracks");
   const covers = path.join(base, "covers");
+  const tts = path.join(base, "tts");
   fs.mkdirSync(tracks, { recursive: true });
   fs.mkdirSync(covers, { recursive: true });
-  return { base, tracks, covers };
+  fs.mkdirSync(tts, { recursive: true });
+  return { base, tracks, covers, tts };
 }
 
 function sha1Hex(text) {
@@ -790,6 +792,119 @@ function safeJsonWrite(p, obj) {
   const tmp = `${p}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), "utf8");
   fs.renameSync(tmp, p);
+}
+
+// ---------------------------------------------------------------------------
+// MiMo TTS
+// ---------------------------------------------------------------------------
+
+function getTtsConfigPath() {
+  return path.join(getClaudefmFolder(), "tts-config.json");
+}
+
+function loadTtsConfig() {
+  const p = getTtsConfigPath();
+  const data = safeJsonLoad(p);
+  if (!data || typeof data !== "object") return null;
+  const apiKey = String(data.api_key || "").trim();
+  if (!apiKey) return null;
+  return {
+    provider: String(data.provider || "mimo").trim(),
+    apiKey,
+    endpoint: String(data.endpoint || "https://api.xiaomimimo.com/v1/chat/completions").trim(),
+    model: String(data.model || "mimo-v2.5-tts").trim(),
+    voice: String(data.voice || "冰糖").trim(),
+    style: String(data.style || "").trim(),
+  };
+}
+
+async function mimoTtsSynthesize(text, config) {
+  let s = String(text || "").trim();
+  if (!s) return { ok: false, error: "empty text" };
+  if (s.length > 2000) s = s.slice(0, 2000);
+
+  const endpoint = config.endpoint || "https://api.xiaomimimo.com/v1/chat/completions";
+  const style = config.style || "温柔亲切的电台DJ风格，语速适中，带有感染力";
+
+  const messages = [
+    { role: "user", content: style },
+    { role: "assistant", content: s },
+  ];
+
+  const body = JSON.stringify({
+    model: config.model || "mimo-v2.5-tts",
+    messages,
+    audio: {
+      format: "wav",
+      voice: config.voice || "冰糖",
+    },
+  });
+
+  console.error(`[mimo] tts request: endpoint=${endpoint}, voice=${config.voice}, text=${s.slice(0, 40)}...`);
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": config.apiKey,
+      },
+      body,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      return { ok: false, error: `mimo http ${resp.status}: ${errText.slice(0, 200)}` };
+    }
+
+    const result = await resp.json();
+    const audioData = result?.choices?.[0]?.message?.audio?.data;
+    if (!audioData) {
+      return { ok: false, error: "mimo returned no audio data" };
+    }
+
+    // MiMo returns wav, convert to mp3-compatible base64 for browser playback
+    // Actually browser Audio can play wav directly, so just return it
+    console.error(`[mimo] tts success: audio base64 length=${audioData.length}`);
+    return { ok: true, audio: { mime: "audio/wav", base64: audioData } };
+  } catch (e) {
+    return { ok: false, error: `mimo request failed: ${e.message || e}` };
+  }
+}
+
+function getTtsCachePath(text) {
+  const folders = ensureCacheFolders();
+  return path.join(folders.tts, `${sha1Hex(text)}.mp3`);
+}
+
+function cacheTtsAudio(text, audioB64) {
+  const p = getTtsCachePath(text);
+  try {
+    const buf = Buffer.from(audioB64, "base64");
+    if (buf.length > 4 * 1024 * 1024) return { ok: false, error: "audio too large" };
+    fs.writeFileSync(p, buf);
+    return { ok: true, path: p };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+function getCachedTts(text) {
+  const p = getTtsCachePath(text);
+  if (!fs.existsSync(p)) return { ok: true, hit: false };
+  try {
+    const size = fs.statSync(p).size;
+    if (size <= 0 || size > 4 * 1024 * 1024) return { ok: true, hit: false };
+    const buf = fs.readFileSync(p);
+    const b64 = buf.toString("base64");
+    // Detect format: WAV starts with "RIFF", MP3 starts with "ID3" or sync word 0xFF
+    const isWav = buf.length > 4 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+    const mime = isWav ? "audio/wav" : "audio/mpeg";
+    return { ok: true, hit: true, audio: { mime, base64: b64 }, path: p };
+  } catch {
+    return { ok: true, hit: false };
+  }
 }
 
 function normalizeTrackKey(name, artist) {
@@ -1638,6 +1753,30 @@ readNativeMessageStream(async (msg) => {
         sendNativeMessage({ ok: false, error: "empty text" });
         return;
       }
+
+      // 1) 缓存命中
+      const cached = getCachedTts(text);
+      if (cached.ok && cached.hit) {
+        console.error(`[tts] cache hit for text=${text.slice(0, 40)}`);
+        sendNativeMessage({ ok: true, audio: cached.audio, provider: "cache", path: cached.path || "" });
+        return;
+      }
+
+      // 2) MiMo TTS
+      const mimoCfg = loadTtsConfig();
+      console.error(`[tts] mimoCfg loaded: ${mimoCfg ? "yes" : "no"}`);
+      if (mimoCfg) {
+        console.error(`[tts] calling mimo API, voice=${mimoCfg.voice}, text=${text.slice(0, 40)}`);
+        const resp = await mimoTtsSynthesize(text, mimoCfg);
+        console.error(`[tts] mimo response: ok=${resp.ok}, error=${resp.error || ""}`);
+        if (resp.ok) {
+          cacheTtsAudio(text, resp.audio.base64);
+          sendNativeMessage({ ok: true, audio: resp.audio, provider: "mimo" });
+          return;
+        }
+      }
+
+      // 3) Claude TTS model fallback
       const schema = buildTtsSchema();
       const prompt = buildTtsPrompt(text);
       const models = pickTtsModels();
@@ -1663,13 +1802,14 @@ readNativeMessageStream(async (msg) => {
             lastError = "audio too large";
             continue;
           }
-          sendNativeMessage({ ok: true, audio: { mime: guessed || mime || "audio/wav", base64: b64 }, model: m });
+          cacheTtsAudio(text, b64);
+          sendNativeMessage({ ok: true, audio: { mime: guessed || mime || "audio/wav", base64: b64 }, provider: "claude_tts", model: m });
           return;
         }
         sendNativeMessage({ ok: false, error: lastError || "tts synthesis failed", modelsTried: tried });
         return;
       }
-      sendNativeMessage({ ok: false, error: "no tts model configured", models: listConfiguredModels() });
+      sendNativeMessage({ ok: false, error: "no tts provider available (set tts-config.json or configure a TTS model)" });
       return;
     }
     if (msg.type === "detectLocalAiTools") {

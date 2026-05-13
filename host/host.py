@@ -875,12 +875,125 @@ def ensure_cache_folders():
     base = get_cache_folder()
     tracks_dir = os.path.join(base, "tracks")
     covers_dir = os.path.join(base, "covers")
+    tts_dir = os.path.join(base, "tts")
     os.makedirs(tracks_dir, exist_ok=True)
     os.makedirs(covers_dir, exist_ok=True)
-    return {"base": base, "tracks": tracks_dir, "covers": covers_dir}
+    os.makedirs(tts_dir, exist_ok=True)
+    return {"base": base, "tracks": tracks_dir, "covers": covers_dir, "tts": tts_dir}
 
 def sha1_hex(text):
     return hashlib.sha1(str(text or "").encode("utf-8")).hexdigest()
+
+# ---------------------------------------------------------------------------
+# MiMo TTS
+# ---------------------------------------------------------------------------
+
+def get_tts_config_path():
+    return os.path.join(get_claudefm_folder(), "tts-config.json")
+
+def load_tts_config():
+    p = get_tts_config_path()
+    data = safe_json_load(p)
+    if not isinstance(data, dict):
+        return None
+    api_key = str(data.get("api_key", "") or "").strip()
+    if not api_key:
+        return None
+    return {
+        "provider": str(data.get("provider", "mimo") or "mimo").strip(),
+        "api_key": api_key,
+        "endpoint": str(data.get("endpoint", "https://api.xiaomimimo.com/v1/chat/completions") or "https://api.xiaomimimo.com/v1/chat/completions").strip(),
+        "model": str(data.get("model", "mimo-v2.5-tts") or "mimo-v2.5-tts").strip(),
+        "voice": str(data.get("voice", "冰糖") or "冰糖").strip(),
+        "style": str(data.get("style", "") or "").strip(),
+    }
+
+def mimo_tts_synthesize(text, config):
+    s = str(text or "").strip()
+    if not s:
+        return {"ok": False, "error": "empty text"}
+    if len(s) > 2000:
+        s = s[:2000]
+
+    endpoint = config.get("endpoint", "") or "https://api.xiaomimimo.com/v1/chat/completions"
+    style = config.get("style", "") or "温柔亲切的电台DJ风格，语速适中，带有感染力"
+
+    messages = [
+        {"role": "user", "content": style},
+        {"role": "assistant", "content": s},
+    ]
+
+    body = json.dumps({
+        "model": config.get("model", "mimo-v2.5-tts"),
+        "messages": messages,
+        "audio": {
+            "format": "wav",
+            "voice": config.get("voice", "冰糖"),
+        },
+    }).encode("utf-8")
+
+    print(f"[mimo] tts request: endpoint={endpoint}, voice={config.get('voice')}, text={s[:40]}...", file=sys.stderr)
+
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "api-key": config["api_key"],
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"ok": False, "error": f"mimo request failed: {e}"}
+
+    audio_data = None
+    try:
+        audio_data = result["choices"][0]["message"]["audio"]["data"]
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    if not audio_data:
+        return {"ok": False, "error": "mimo returned no audio data"}
+
+    print(f"[mimo] tts success: audio base64 length={len(audio_data)}", file=sys.stderr)
+    return {"ok": True, "audio": {"mime": "audio/wav", "base64": audio_data}}
+
+def get_tts_cache_path(text):
+    folders = ensure_cache_folders()
+    return os.path.join(folders["tts"], f"{sha1_hex(text)}.mp3")
+
+def cache_tts_audio(text, audio_b64):
+    path = get_tts_cache_path(text)
+    try:
+        data = base64.b64decode(audio_b64)
+        if len(data) > 4 * 1024 * 1024:
+            return {"ok": False, "error": "audio too large"}
+        with open(path, "wb") as f:
+            f.write(data)
+        return {"ok": True, "path": path}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def get_cached_tts(text):
+    path = get_tts_cache_path(text)
+    if not os.path.isfile(path):
+        return {"ok": True, "hit": False}
+    try:
+        size = os.path.getsize(path)
+        if size <= 0 or size > 4 * 1024 * 1024:
+            return {"ok": True, "hit": False}
+        with open(path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode("ascii")
+        # Detect format: WAV starts with "RIFF", MP3 starts with "ID3" or sync word
+        is_wav = len(data) > 4 and data[:4] == b"RIFF"
+        mime = "audio/wav" if is_wav else "audio/mpeg"
+        return {"ok": True, "hit": True, "audio": {"mime": mime, "base64": b64}, "path": path}
+    except Exception:
+        return {"ok": True, "hit": False}
 
 def safe_json_load(path):
     try:
@@ -1295,7 +1408,7 @@ def build_schema():
                     "required": ["name", "artist"]
                 }
             },
-            "segue": {"type": "string"},
+            "segue": {"type": "string", "description": "电台 DJ 推荐语，100-200字，包含开场问候、推荐理由、歌曲亮点、情感共鸣、自然过渡"},
             "memory": {
                 "type": "array",
                 "items": {
@@ -1397,8 +1510,8 @@ def build_prompt(input_data):
         "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
         "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
         "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
-        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
+        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
+        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
         "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
         "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
         "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
@@ -1456,8 +1569,8 @@ def build_prompt(input_data):
         "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
         "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？“），并且 play 输出空数组、segue 输出空字符串。",
         "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10，segue 需要可口播）。",
-        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false。",
+        "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
+        "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
         "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
         "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
         "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
@@ -1828,6 +1941,24 @@ def main():
                 if not text:
                     send_message({"ok": False, "error": "empty text"})
                     continue
+
+                # 1) 缓存命中
+                cached = get_cached_tts(text)
+                if cached.get("ok") and cached.get("hit"):
+                    send_message({"ok": True, "audio": cached["audio"], "provider": "cache", "path": cached.get("path", "")})
+                    continue
+
+                # 2) MiMo TTS
+                mimo_cfg = load_tts_config()
+                if mimo_cfg:
+                    resp = mimo_tts_synthesize(text, mimo_cfg)
+                    if resp.get("ok"):
+                        audio = resp["audio"]
+                        cache_tts_audio(text, audio["base64"])
+                        send_message({"ok": True, "audio": audio, "provider": "mimo"})
+                        continue
+
+                # 3) Claude TTS model fallback
                 schema = build_tts_schema()
                 prompt = build_tts_prompt(text)
                 models = pick_tts_models()
@@ -1851,7 +1982,8 @@ def main():
                         if len(data) > 4 * 1024 * 1024:
                             last_error = "audio too large"
                             continue
-                        send_message({"ok": True, "audio": {"mime": guessed or mime or "audio/wav", "base64": b64}, "model": m})
+                        cache_tts_audio(text, b64)
+                        send_message({"ok": True, "audio": {"mime": guessed or mime or "audio/wav", "base64": b64}, "provider": "claude_tts", "model": m})
                         break
                     else:
                         send_message({
@@ -1862,8 +1994,7 @@ def main():
                 else:
                     send_message({
                         "ok": False,
-                        "error": "no tts model configured",
-                        "models": list_configured_models(),
+                        "error": "no tts provider available (set tts-config.json or configure a TTS model)",
                     })
             except Exception as e:
                 send_message({"ok": False, "error": str(e)})

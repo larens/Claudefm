@@ -108,6 +108,60 @@ async function clearPreload(reason = "reset") {
   await emitState(`preload:${reason}`);
 }
 
+function base64ToBlob(b64, mime) {
+  const raw = atob(b64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) arr[i] = raw.charCodeAt(i);
+  return new Blob([arr], { type: mime || "audio/mpeg" });
+}
+
+async function requestTtsAudio(text) {
+  try {
+    console.log("[offscreen] requestTtsAudio sending, text=" + text.slice(0, 40));
+    const resp = await chrome.runtime.sendMessage({ type: "tts", text });
+    console.log("[offscreen] requestTtsAudio response:", JSON.stringify({ ok: resp?.ok, provider: resp?.provider, error: resp?.error, hasAudio: !!(resp?.audio?.base64) }));
+    if (resp && resp.ok && resp.audio && resp.audio.base64) {
+      return resp.audio;
+    }
+  } catch (e) {
+    console.log("[offscreen] requestTtsAudio error:", e?.message || e);
+  }
+  return null;
+}
+
+async function playTtsAudio(text, token) {
+  const audio = await requestTtsAudio(text);
+  if (!audio) return false;
+  if (token !== playRequestToken) return true;
+
+  const blob = base64ToBlob(audio.base64, audio.mime);
+  if (!blob.size) return false;
+  const url = URL.createObjectURL(blob);
+  const el = new Audio();
+  el.preload = "auto";
+  el.src = url;
+
+  let played = false;
+  await emitState("speech:start");
+  await new Promise((resolve) => {
+    el.oncanplaythrough = () => {
+      el.play().then(() => { played = true; }).catch(() => {}).finally(() => resolve());
+    };
+    el.onerror = () => resolve();
+    setTimeout(() => resolve(), 5000);
+  });
+  if (!played) {
+    try { URL.revokeObjectURL(url); } catch {}
+    return false;
+  }
+  await new Promise((resolve) => {
+    el.onended = () => resolve();
+    el.onerror = () => resolve();
+  });
+  try { URL.revokeObjectURL(url); } catch {}
+  return true;
+}
+
 function randomInt(minInclusive, maxInclusive) {
   const min = Number(minInclusive);
   const max = Number(maxInclusive);
@@ -304,21 +358,29 @@ async function playAt(index) {
     speechActive = true;
     speechPaused = false;
     schedulePreloadForNextTrack();
-    refreshVoiceCache();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "zh-CN";
-    const voice = pickVoiceById(ttsVoiceId);
-    if (voice) u.voice = voice;
-    await emitState("speech:start");
-    await new Promise((resolve) => {
-      u.onend = () => resolve();
-      u.onerror = () => resolve();
-      try {
-        window.speechSynthesis.cancel();
-      } catch {}
-      window.speechSynthesis.speak(u);
-    });
+
+    // 尝试 TTS API（讯飞 / Claude TTS model），失败则 fallback 到浏览器 SpeechSynthesis
+    const usedTtsApi = await playTtsAudio(text, token);
     if (token !== playRequestToken) return snapshotState();
+
+    if (!usedTtsApi) {
+      refreshVoiceCache();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-CN";
+      const voice = pickVoiceById(ttsVoiceId);
+      if (voice) u.voice = voice;
+      await emitState("speech:start");
+      await new Promise((resolve) => {
+        u.onend = () => resolve();
+        u.onerror = () => resolve();
+        try {
+          window.speechSynthesis.cancel();
+        } catch {}
+        window.speechSynthesis.speak(u);
+      });
+      if (token !== playRequestToken) return snapshotState();
+    }
+
     speechActive = false;
     speechPaused = false;
     await emitState("speech:end");
@@ -355,6 +417,27 @@ async function playAt(index) {
   activeAudio.src = streamUrl;
   activeAudio.currentTime = 0;
   activeAudio.load();
+
+  const canPlay = await new Promise((resolve) => {
+    const onOk = () => { cleanup(); resolve(true); };
+    const onErr = () => { cleanup(); resolve(false); };
+    const cleanup = () => {
+      activeAudio.removeEventListener("canplaythrough", onOk);
+      activeAudio.removeEventListener("error", onErr);
+    };
+    activeAudio.addEventListener("canplaythrough", onOk, { once: true });
+    activeAudio.addEventListener("error", onErr, { once: true });
+    setTimeout(() => { cleanup(); resolve(false); }, 8000);
+  });
+
+  if (!canPlay || token !== playRequestToken) {
+    if (token === playRequestToken) {
+      await emitError(new Error("audio source load failed"), "playAt.audio.load");
+      await emitState("track:play-error");
+    }
+    return snapshotState();
+  }
+
   try {
     await activeAudio.play();
   } catch (error) {

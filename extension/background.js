@@ -360,29 +360,34 @@ async function resolveTrackWithFallback(track) {
     }
   } catch {}
 
-  const directResult = await resolveTrackViaFetch(track);
-  if (directResult?.streamUrl) {
-    try {
-      const query = normalizeTrackQuery(track);
-      if (query?.name && query?.artist) {
-        void sendNativeWithTimeout({ type: "cacheTrack", track: query, resolved: directResult }, 1200);
-      }
-    } catch {}
-    return directResult;
+  const maxAttempts = 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+
+    const directResult = await resolveTrackViaFetch(track);
+    if (directResult?.streamUrl) {
+      try {
+        const query = normalizeTrackQuery(track);
+        if (query?.name && query?.artist) {
+          void sendNativeWithTimeout({ type: "cacheTrack", track: query, resolved: directResult }, 1200);
+        }
+      } catch {}
+      return directResult;
+    }
+
+    const tabResult = await resolveTrackViaProviderTab(track);
+    if (tabResult?.streamUrl) {
+      try {
+        const query = normalizeTrackQuery(track);
+        if (query?.name && query?.artist) {
+          void sendNativeWithTimeout({ type: "cacheTrack", track: query, resolved: tabResult }, 1200);
+        }
+      } catch {}
+      return tabResult;
+    }
   }
 
-  const tabResult = await resolveTrackViaProviderTab(track);
-  if (tabResult?.streamUrl) {
-    try {
-      const query = normalizeTrackQuery(track);
-      if (query?.name && query?.artist) {
-        void sendNativeWithTimeout({ type: "cacheTrack", track: query, resolved: tabResult }, 1200);
-      }
-    } catch {}
-    return tabResult;
-  }
-
-  console.warn("[background] resolveTrack failed", { track });
+  console.warn("[background] resolveTrack failed after retries", { track });
   return null;
 }
 
