@@ -838,6 +838,77 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
         return;
       }
+      if (msg.type === "nextBatch") {
+        sendResponse({ ok: true });
+        try {
+          const prefs = await getPreferences();
+          const { profileSummary } = await chrome.storage.local.get("profileSummary");
+          const { trackVotesV1 } = await chrome.storage.local.get("trackVotesV1");
+          const votes = trackVotesV1 && typeof trackVotesV1 === "object" ? trackVotesV1 : {};
+          const likedTracks = [];
+          const dislikedTracks = [];
+          Object.entries(votes).forEach(([key, v]) => {
+            const vote = Number(v);
+            if (vote !== 1 && vote !== -1) return;
+            const k = String(key || "");
+            const parts = k.split("|");
+            if (parts.length < 2) return;
+            const name = parts[0] ? String(parts[0]).trim() : "";
+            const artist = parts[1] ? String(parts[1]).trim() : "";
+            if (!name || !artist) return;
+            if (vote === 1) likedTracks.push({ name, artist });
+            else dislikedTracks.push({ name, artist });
+          });
+
+          const payload = {
+            type: "nextBatch",
+            recentTracks: msg.recentTracks || [],
+            djName: prefs.djName ?? "Claudio",
+            provider: "paojiao",
+            profileSummary: profileSummary ?? "",
+            likedTracks: likedTracks.slice(0, 20),
+            dislikedTracks: dislikedTracks.slice(0, 20),
+            preferences: {
+              localAiToolMode: prefs.localAiToolMode || "auto",
+              localAiToolId: prefs.localAiToolId || "",
+            },
+          };
+
+          const resp = await sendNative(payload);
+          if (!resp?.ok) return;
+
+          if (resp.profileSummary) {
+            await chrome.storage.local.set({ profileSummary: resp.profileSummary });
+          }
+          try {
+            if (resp.result && typeof resp.result === "object" && Array.isArray(resp.result.play)) {
+              resp.result.play = applyTrackVotesFilter(resp.result.play, votes);
+            }
+          } catch {}
+
+          void prependListSection("nextBatch", resp.result).catch(() => {});
+          try {
+            if (Array.isArray(resp.result?.play)) void warmCacheTracks(resp.result.play);
+          } catch {}
+
+          let ttsAudioUrl = "";
+          const segueText = resp.result?.segue ? String(resp.result.segue).trim() : "";
+          if (segueText) {
+            try {
+              const ttsResp = await sendNativeWithTimeout({ type: "tts", text: segueText }, 30000);
+              if (ttsResp?.ok && ttsResp.audioUrl) ttsAudioUrl = ttsResp.audioUrl;
+            } catch {}
+          }
+
+          void sendOffscreenCommand("player.nextBatchResult", {
+            result: resp.result,
+            ttsAudioUrl,
+          });
+        } catch (e) {
+          console.warn("[background] nextBatch error", e);
+        }
+        return;
+      }
       if (msg.type === "resolveTrack") {
         const res = await resolveTrackWithFallback(msg.track);
         sendResponse(res);

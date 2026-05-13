@@ -407,6 +407,8 @@ function buildSchema() {
       confirmQuestion: { type: "string" },
       play: {
         type: "array",
+        minItems: 3,
+        maxItems: 5,
         items: {
           type: "object",
           properties: {
@@ -489,8 +491,8 @@ function buildPrompt(input) {
     "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
     "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
     "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-    "当 forceRecommend=true 时，必须推荐 5-10 首歌（play 长度 5-10），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
-    "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 5-10 首歌（play 长度 5-10），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
+    "当 forceRecommend=true 时，必须推荐 3-5 首歌（play 长度 3-5），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
+    "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 3-5 首歌（play 长度 3-5），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
     "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
     "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
     "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
@@ -1903,8 +1905,83 @@ readNativeMessageStream(async (msg) => {
         djName: dj,
         forceProfileRefresh: false,
         forceRecommend: true,
-        text: "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 5-10 首适合现在的歌。"
+        text: "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 3-5 首适合现在的歌。"
       });
+
+      const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+      if (!resp.ok) {
+        sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+        return;
+      }
+      const nextProfile = applyMemory(profileSummary, resp.result.memory || []);
+      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+      return;
+    }
+    if (msg.type === "nextBatch") {
+      const schema = buildSchema();
+      const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
+      const djRaw = msg.djName ?? "Claudio";
+      const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
+      const provider = msg.provider || "paojiao";
+      const likedTracks = Array.isArray(msg.likedTracks) ? msg.likedTracks : [];
+      const dislikedTracks = Array.isArray(msg.dislikedTracks) ? msg.dislikedTracks : [];
+      const recentTracks = Array.isArray(msg.recentTracks) ? msg.recentTracks : [];
+
+      const detection = detectLocalAiTools();
+      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+      if (!resolved.tool) {
+        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+        return;
+      }
+
+      const listFile = readListFile();
+      const listMd = listFile && listFile.ok ? String(listFile.content || "") : "";
+      const memMd = readMusicMemoryFile();
+
+      const fmtTracks = (items, limit = 20) =>
+        items
+          .slice(0, limit)
+          .map((t) => {
+            const name = t && t.name ? String(t.name).trim() : "";
+            const artist = t && t.artist ? String(t.artist).trim() : "";
+            if (!name || !artist) return "";
+            return `- ${name} - ${artist}`;
+          })
+          .filter(Boolean)
+          .join("\n");
+
+      const recentTracksText = fmtTracks(recentTracks, 20) || "(无)";
+
+      const prompt = [
+        `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
+        "电台正在持续播放中，你需要为下一个段落衔接推荐。",
+        `当前音源来源偏好：${provider}。`,
+        "必须输出 JSON，字段遵循给定 schema。",
+        "say 输出简短衔接语（1-2句即可，不需要像开场那样长）。",
+        "推荐 3-5 首歌（play 长度 3-5），segue 必须是一段完整的电台 DJ 推荐语（100-200字），用自然的口吻衔接上段内容，风格延续但歌曲不要重复。像真实电台主播一样自然亲切。",
+        "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
+        "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重。",
+        "每首歌只输出 name/artist；album/query/provider 可选。",
+        "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
+        "",
+        "【likedTracks（赞）】",
+        fmtTracks(likedTracks) || "(空)",
+        "",
+        "【dislikedTracks（踩）】",
+        fmtTracks(dislikedTracks) || "(空)",
+        "",
+        "【刚才已播放的歌曲】",
+        recentTracksText,
+        "",
+        "【历史播放歌单（list.md 摘要）】",
+        listMd.trim() || "(空)",
+        "",
+        "【历史记忆文件（music.md 摘要）】",
+        (memMd || "").trim() || "(空)",
+        "",
+        "【画像摘要】",
+        profileSummary || "(空)",
+      ].join("\n");
 
       const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
       if (!resp.ok) {

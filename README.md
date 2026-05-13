@@ -2,7 +2,7 @@
 
 中文 · [English](./README.en.md)
 
-Claudefm 是一个 Chromium Side Panel 扩展，把”DJ 对话 + 歌单推荐 + 自动播放”做成一个本地优先的音乐助手。
+Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + 自动播放"做成一个本地优先的音乐助手。
 
 - 对话与推荐：通过 Native Messaging 调用本机 Claude Code CLI
 - 本地数据：Host 落盘到本机目录，扩展状态保存在 `chrome.storage.local`
@@ -62,62 +62,44 @@ Claudefm 是一个 Chromium Side Panel 扩展，把”DJ 对话 + 歌单推荐 +
 2. 开启开发者模式
 3. 选择 `Load unpacked`
 4. 选择仓库中的 `extension/`
-5. 复制扩展 ID
+5. 复制扩展 ID（形如 `abcdefghijklmnop`）
 
-### 2. 配置安装文件
+### 2. 安装 Native Host
 
-可以直接命令行传参：
-
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
-
-高级用法：
+在仓库根目录执行（将 `<ID>` 替换为上一步复制的扩展 ID）：
 
 ```bash
-node host/install.mjs --config host/install-linux.json
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+node host/install.mjs --extensionId <ID>
 ```
 
-也可以按平台编辑对应配置文件：
-
-- macOS：`host/install-macos.json`
-- Linux：`host/install-linux.json`
-- Windows：`host/install-windows.json`
-
-最小配置示例：
-
-```json
-{
-  "extensionId": "YOUR_EXTENSION_ID"
-}
-```
-
-可选字段：
-
-```json
-{
-  "extensionId": "YOUR_EXTENSION_ID",
-  "dataDir": "/absolute/path/to/Claudefm-data",
-  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
-}
-```
-
-### 3. 安装 Native Host 并生成初始化文件
-
-```bash
-cd host
-node install.mjs
-```
-
-安装脚本会同时完成这些事情：
+安装脚本会自动完成：
 
 - 安装 Native Messaging manifest
 - 写入运行期配置快照 `host/runtime-config.json`
 - 创建本地数据目录
-- 生成 `music.md`
-- 生成 `list.md`
+- 生成 `music.md`、`list.md`
 - 创建 `cache/`、`cache/tracks/`、`cache/covers/`、`cache/tts/`
+
+### 3. 配置 TTS（推荐语语音）
+
+DJ 推荐语需要 TTS 服务转换为语音。配置好 MiMo TTS 后，推荐语才能以语音形式播放。
+
+在本地数据目录下创建 `tts-config.json`：
+
+- macOS：`~/Documents/Claudefm/tts-config.json`
+- Linux：`~/.local/share/Claudefm/tts-config.json`
+- Windows：`%APPDATA%\Claudefm\tts-config.json`
+
+```json
+{
+  "provider": "mimo",
+  "api_key": "your-api-key-here"
+}
+```
+
+只需填写 `api_key`，其余字段使用默认值即可。配置完成后重启浏览器生效。
+
+> `api_key` 为空时 MiMo TTS 不会启用，Host 将尝试 Claude TTS 模型回退。
 
 ### 4. 打开侧栏
 
@@ -134,17 +116,15 @@ node install.mjs
 | DJ 推荐自动播放 | 开启时 DJ 推荐直接播放；关闭时显示确认按钮，手动点击后才播放 |
 | 本地 AI 工具 | 自动检测或手动选择本地 AI CLI 工具 |
 
-## TTS 语音合成配置
+## TTS 语音合成
 
 DJ 推荐语通过 TTS（Text-to-Speech）转换为语音播放。Host 按以下优先级获取音频：
 
-1. **本地缓存**：命中 `cache/tts/` 中已有的音频文件时直接播放（通过本地 HTTP 服务传输，避免 Native Messaging 大小限制）
+1. **本地缓存**：命中 `cache/tts/` 中已有的音频文件时直接播放（通过本地 HTTP 服务传输，避免 Native Messaging 大量限制）
 2. **MiMo TTS API**：调用小米 MiMo TTS 接口生成语音
 3. **Claude TTS 模型回退**：使用本地配置的 Claude TTS 模型生成
 
-### MiMo TTS 配置
-
-在本地数据目录下创建 `tts-config.json`：
+### MiMo TTS 完整配置
 
 ```json
 {
@@ -166,11 +146,44 @@ DJ 推荐语通过 TTS（Text-to-Speech）转换为语音播放。Host 按以下
 | `voice` | 音色名称 | `白桦` |
 | `style` | 语音风格提示词 | 空 |
 
-`api_key` 为空时 MiMo TTS 不会启用，Host 将直接尝试 Claude TTS 模型回退。
-
 ### 音频缓存
 
 生成的 TTS 音频自动缓存到 `cache/tts/` 目录，文件名为文本内容的 SHA-1 哈希值。相同文本不会重复请求 API。Host 启动时懒加载一个本地 HTTP 服务（`127.0.0.1:<随机端口>`）用于向扩展传输缓存音频，绕过 Native Messaging 的消息大小限制。
+
+## 高级安装选项
+
+默认情况下 `--extensionId` 即可完成安装。如需自定义数据目录或指定 Host 路径，可使用以下方式：
+
+### CLI 参数
+
+```bash
+node host/install.mjs --extensionId <ID> --dataDir /absolute/path/to/data
+node host/install.mjs --config host/install-linux.json
+```
+
+### 编辑平台配置文件
+
+- macOS：`host/install-macos.json`
+- Linux：`host/install-linux.json`
+- Windows：`host/install-windows.json`
+
+最小配置：
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID"
+}
+```
+
+完整配置：
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID",
+  "dataDir": "/absolute/path/to/Claudefm-data",
+  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
+}
+```
 
 ## 默认本地数据目录
 
@@ -214,6 +227,11 @@ DJ 推荐语通过 TTS（Text-to-Speech）转换为语音播放。Host 按以下
 - 找不到 `claude`
 - 确认 Claude Code CLI 已安装，且 `claude` 在 `PATH` 中
 - 或设置环境变量 `CLAUDE_BIN` 指向可执行文件绝对路径
+
+- DJ 推荐语没有声音
+- 确认 `tts-config.json` 中的 `api_key` 已填写
+- 确认文件路径正确（macOS 默认 `~/Documents/Claudefm/tts-config.json`）
+- 重启浏览器使配置生效
 
 - 想自定义数据目录
 - 在安装配置里设置 `dataDir`

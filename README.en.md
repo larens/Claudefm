@@ -64,62 +64,44 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 2. Enable Developer mode
 3. Click `Load unpacked`
 4. Select the `extension/` directory
-5. Copy the extension ID
+5. Copy the extension ID (looks like `abcdefghijklmnop`)
 
-### 2. Configure The Installer
+### 2. Install The Native Host
 
-You can also pass values through CLI arguments:
-
-```bash
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID>
-```
-
-Advanced examples:
+Run from the repo root (replace `<ID>` with your extension ID):
 
 ```bash
-node host/install.mjs --config host/install-linux.json
-node host/install.mjs --extensionId <YOUR_EXTENSION_ID> --dataDir /absolute/path/to/data
+node host/install.mjs --extensionId <ID>
 ```
 
-You can also edit the platform-specific config file:
+The installer will automatically:
 
-- macOS: `host/install-macos.json`
-- Linux: `host/install-linux.json`
-- Windows: `host/install-windows.json`
+- Install the Native Messaging manifest
+- Write `host/runtime-config.json`
+- Create the local data directory
+- Create `music.md` and `list.md`
+- Create `cache/`, `cache/tracks/`, `cache/covers/`, and `cache/tts/`
 
-Minimal example:
+### 3. Configure TTS (DJ Voice)
+
+DJ recommendation speech requires a TTS service. Configure MiMo TTS to enable voice playback.
+
+Create `tts-config.json` in your local data directory:
+
+- macOS: `~/Documents/Claudefm/tts-config.json`
+- Linux: `~/.local/share/Claudefm/tts-config.json`
+- Windows: `%APPDATA%\Claudefm\tts-config.json`
 
 ```json
 {
-  "extensionId": "YOUR_EXTENSION_ID"
+  "provider": "mimo",
+  "api_key": "your-api-key-here"
 }
 ```
 
-Optional fields:
+Only `api_key` is required; all other fields use sensible defaults. Restart the browser after configuration.
 
-```json
-{
-  "extensionId": "YOUR_EXTENSION_ID",
-  "dataDir": "/absolute/path/to/Claudefm-data",
-  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
-}
-```
-
-### 3. Install The Native Host And Generate Init Files
-
-```bash
-cd host
-node install.mjs
-```
-
-The installer will:
-
-- install the Native Messaging manifest
-- write `host/runtime-config.json`
-- create the local data directory
-- create `music.md`
-- create `list.md`
-- create `cache/`, `cache/tracks/`, `cache/covers/`, and `cache/tts/`
+> When `api_key` is empty, MiMo TTS is skipped and the host falls back to Claude TTS models.
 
 ### 4. Open The Side Panel
 
@@ -136,7 +118,7 @@ Click the gear icon in the top-right corner of the side panel to open settings:
 | DJ auto-play | When ON, DJ recommendations play immediately; when OFF, shows confirm buttons before playing |
 | Local AI Tool | Auto-detect or manually select a local AI CLI tool |
 
-## TTS Voice Synthesis Configuration
+## TTS Voice Synthesis
 
 DJ segue text is converted to speech via TTS (Text-to-Speech). The host retrieves audio in the following priority:
 
@@ -144,9 +126,7 @@ DJ segue text is converted to speech via TTS (Text-to-Speech). The host retrieve
 2. **MiMo TTS API**: calls the Xiaomi MiMo TTS endpoint to generate speech
 3. **Claude TTS model fallback**: uses a locally configured Claude TTS model
 
-### MiMo TTS Setup
-
-Create `tts-config.json` in your local data directory:
+### MiMo TTS Full Configuration
 
 ```json
 {
@@ -168,11 +148,44 @@ Create `tts-config.json` in your local data directory:
 | `voice` | Voice name | `Milo` |
 | `style` | Voice style prompt | empty |
 
-When `api_key` is empty, MiMo TTS is skipped and the host falls back directly to Claude TTS models.
-
 ### Audio Cache
 
 Generated TTS audio is automatically cached in `cache/tts/` with SHA-1 hashed filenames. Identical text will not re-trigger an API request. On startup the host lazily boots a local HTTP server (`127.0.0.1:<random port>`) to serve cached audio to the extension, bypassing Native Messaging message size limits.
+
+## Advanced Install Options
+
+By default `--extensionId` is all you need. For custom data directories or host paths:
+
+### CLI Arguments
+
+```bash
+node host/install.mjs --extensionId <ID> --dataDir /absolute/path/to/data
+node host/install.mjs --config host/install-linux.json
+```
+
+### Platform Config Files
+
+- macOS: `host/install-macos.json`
+- Linux: `host/install-linux.json`
+- Windows: `host/install-windows.json`
+
+Minimal config:
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID"
+}
+```
+
+Full config:
+
+```json
+{
+  "extensionId": "YOUR_EXTENSION_ID",
+  "dataDir": "/absolute/path/to/Claudefm-data",
+  "hostAbsolutePath": "/absolute/path/to/claudefm-host.sh"
+}
+```
 
 ## Default Local Data Directories
 
@@ -216,6 +229,11 @@ Typical contents:
 - `claude` not found
 - Install Claude Code CLI and ensure `claude` is available in `PATH`
 - Or set `CLAUDE_BIN` to the absolute executable path
+
+- DJ recommendation speech has no sound
+- Confirm `api_key` is set in `tts-config.json`
+- Confirm the file is in the correct directory (macOS default: `~/Documents/Claudefm/tts-config.json`)
+- Restart the browser to apply the configuration
 
 - Need a custom data directory
 - Set `dataDir` in the install config

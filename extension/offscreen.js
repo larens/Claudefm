@@ -15,6 +15,7 @@ let speechPaused = false;
 let segmentTarget = 0;
 let segmentTracks = [];
 let interludeInFlight = false;
+let nextBatchInFlight = false;
 let activeAudio = audioA;
 let preloadAudio = audioB;
 let preloadIndex = -1;
@@ -559,6 +560,7 @@ async function replaceQueueAndPlay(nextQueue, startIndex = 0) {
   queueIndex = -1;
   userPaused = false;
   segueSpokenInQueue = 0;
+  nextBatchInFlight = false;
   resetLyricSegment();
   await clearPreload("replace-queue");
   await emitState("queue:replace");
@@ -573,6 +575,24 @@ async function insertTrackAtAndPlay(track, index) {
   queue.splice(insertAt, 0, item);
   await emitState("queue:insert");
   return await playAt(insertAt);
+}
+
+async function appendQueue(newItems) {
+  if (!Array.isArray(newItems) || !newItems.length) return snapshotState();
+  queue.push(...newItems.map(cloneTrack));
+  await emitState("queue:append-next-batch");
+  schedulePreloadForNextTrack();
+  return snapshotState();
+}
+
+function requestNextBatch() {
+  if (nextBatchInFlight) return;
+  nextBatchInFlight = true;
+  const musicTracks = queue
+    .filter(t => !isSpeechItem(t) && t.name && t.artist)
+    .slice(-8)
+    .map(t => ({ name: t.name, artist: t.artist }));
+  chrome.runtime.sendMessage({ type: "nextBatch", recentTracks: musicTracks });
 }
 
 async function seekTo(seconds) {
@@ -603,6 +623,7 @@ async function resetPlayer() {
   queue = [];
   queueIndex = -1;
   interrupted = false;
+  nextBatchInFlight = false;
   userPaused = false;
   speechActive = false;
   speechPaused = false;
@@ -672,6 +693,12 @@ function bindAudioEvents(audio) {
         resetLyricSegment();
       }
     }
+    const remainingMusicTracks = queue
+      .slice(finishedIndex + 1)
+      .filter(t => !isSpeechItem(t));
+    if (remainingMusicTracks.length <= 2) {
+      requestNextBatch();
+    }
     await playNext();
   });
   audio.addEventListener("error", () => {
@@ -722,6 +749,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.command === "player.insertTrackAtAndPlay") {
         sendResponse({ ok: true, state: await insertTrackAtAndPlay(msg.track, Number(msg.index) || 0) });
+        return;
+      }
+      if (msg.command === "player.nextBatchResult") {
+        nextBatchInFlight = false;
+        const result = msg.result;
+        if (!result?.play?.length) { sendResponse({ ok: true }); return; }
+        const newItems = [];
+        const segueText = result.segue ? String(result.segue).trim() : "";
+        if (segueText) {
+          newItems.push({
+            kind: "speech",
+            name: "DJ 推荐语",
+            artist: "",
+            text: segueText,
+            ttsAudioUrl: msg.ttsAudioUrl || "",
+          });
+          segueSpokenInQueue += 1;
+        }
+        newItems.push(...result.play.map(t => ({
+          ...t,
+          streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
+          provider: t?.provider || "pending",
+        })));
+        sendResponse({ ok: true, state: await appendQueue(newItems) });
         return;
       }
       if (msg.command === "player.reset") {
