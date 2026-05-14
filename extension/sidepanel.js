@@ -71,6 +71,12 @@ const elAiToolSelect = document.getElementById("aiToolSelect");
 const elAiToolStatus = document.getElementById("aiToolStatus");
 const elAiToolRefresh = document.getElementById("aiToolRefresh");
 const elAiToolHint = document.getElementById("aiToolHint");
+const elAiProviderLocal = document.getElementById("aiProviderLocal");
+const elAiProviderCloud = document.getElementById("aiProviderCloud");
+const elLocalAiToolSection = document.getElementById("localAiToolSection");
+const elCloudAiSection = document.getElementById("cloudAiSection");
+const elCloudAiStatus = document.getElementById("cloudAiStatus");
+const elCloudAiHint = document.getElementById("cloudAiHint");
 
 const elTrackTitle = document.getElementById("trackTitle");
 const elTrackTime = document.getElementById("trackTime");
@@ -99,6 +105,7 @@ let currentTrack = null;
 
 let localAiToolMode = "auto";
 let localAiToolId = "";
+let aiProvider = "local";
 
 let speechActive = false;
 let speechPaused = false;
@@ -809,7 +816,7 @@ function openSettingsPanel() {
   elSettingsPanel.hidden = false;
   refreshOverlayTransientUiState();
   refreshSettingsDjNameUI();
-  void refreshAiToolSettingsUI();
+  applyProviderVisibility();
 }
 
 function closeSettingsPanel() {
@@ -866,6 +873,36 @@ async function refreshAiToolSettingsUI(forceRefresh = false) {
     }
   } catch (e) {
     elAiToolStatus.textContent = `检测请求失败：${e?.message || e}`;
+  }
+}
+
+function applyProviderVisibility() {
+  if (aiProvider === "cloud") {
+    if (elLocalAiToolSection) elLocalAiToolSection.hidden = true;
+    if (elCloudAiSection) elCloudAiSection.hidden = false;
+    refreshCloudAiStatus();
+  } else {
+    if (elLocalAiToolSection) elLocalAiToolSection.hidden = false;
+    if (elCloudAiSection) elCloudAiSection.hidden = true;
+    refreshAiToolSettingsUI();
+  }
+}
+
+async function refreshCloudAiStatus() {
+  if (!elCloudAiStatus) return;
+  elCloudAiStatus.textContent = "检测中…";
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "checkCloudAiStatus" });
+    if (resp?.ok) {
+      elCloudAiStatus.textContent = `${resp.model} · ${resp.endpoint}`;
+      if (elCloudAiHint) elCloudAiHint.textContent = "API Key 已配置，云端 AI 可用。";
+    } else {
+      elCloudAiStatus.textContent = "不可用";
+      if (elCloudAiHint) elCloudAiHint.textContent = resp?.error || "请在 tts-config.json 中配置 api_key。";
+    }
+  } catch (e) {
+    elCloudAiStatus.textContent = "检测失败";
+    if (elCloudAiHint) elCloudAiHint.textContent = e?.message || "Host 无响应";
   }
 }
 
@@ -1979,6 +2016,25 @@ if (elAiToolRefresh) {
   });
 }
 
+if (elAiProviderLocal) {
+  elAiProviderLocal.addEventListener("change", async () => {
+    if (!elAiProviderLocal.checked) return;
+    aiProvider = "local";
+    try { await patchPreferences({ aiProvider: "local" }); } catch {}
+    setHint("已切换为本地 AI 引擎");
+    applyProviderVisibility();
+  });
+}
+if (elAiProviderCloud) {
+  elAiProviderCloud.addEventListener("change", async () => {
+    if (!elAiProviderCloud.checked) return;
+    aiProvider = "cloud";
+    try { await patchPreferences({ aiProvider: "cloud" }); } catch {}
+    setHint("已切换为云端 AI 引擎");
+    applyProviderVisibility();
+  });
+}
+
 async function saveDjNameFromSettings() {
   if (!elSettingsDjNameInput) return;
   const raw = String(elSettingsDjNameInput.value || "").trim();
@@ -2056,6 +2112,10 @@ safePost({ type: "ready" });
   if (elAiToolModeAuto) elAiToolModeAuto.checked = localAiToolMode === "auto";
   if (elAiToolModeManual) elAiToolModeManual.checked = localAiToolMode === "manual";
   if (elAiToolSelect) elAiToolSelect.disabled = localAiToolMode === "auto";
+  aiProvider = prefs.aiProvider || "local";
+  if (elAiProviderLocal) elAiProviderLocal.checked = aiProvider === "local";
+  if (elAiProviderCloud) elAiProviderCloud.checked = aiProvider === "cloud";
+  applyProviderVisibility();
   if (keepSessionOnClose) {
     await restoreSessionIfAny();
   } else {

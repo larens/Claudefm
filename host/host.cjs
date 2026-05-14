@@ -397,6 +397,59 @@ function safeJsonParse(text) {
   }
 }
 
+function extractJsonFromText(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  // 1) Try raw parse
+  try { return JSON.parse(trimmed); } catch {}
+  // 2) Extract code-fenced JSON
+  const fenced = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenced && fenced[1]) {
+    try { return JSON.parse(fenced[1].trim()); } catch {}
+  }
+  // 3) Brace-matching scan
+  const start = trimmed.indexOf("{");
+  if (start >= 0) {
+    let depth = 0;
+    for (let i = start; i < trimmed.length; i++) {
+      if (trimmed[i] === "{") depth++;
+      else if (trimmed[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(trimmed.slice(start, i + 1)); } catch {}
+          break;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function validateMimoResult(obj) {
+  if (!obj || typeof obj !== "object") {
+    return { say: "正在为你准备歌单", play: [], memory: [] };
+  }
+  const say = typeof obj.say === "string" && obj.say.trim() ? obj.say.trim() : "正在为你准备歌单";
+  let play = [];
+  if (Array.isArray(obj.play)) {
+    play = obj.play
+      .filter((t) => t && typeof t.name === "string" && t.name.trim() && typeof t.artist === "string" && t.artist.trim())
+      .map((t) => ({ name: String(t.name).trim(), artist: String(t.artist).trim(), ...(t.album ? { album: String(t.album).trim() } : {}), ...(t.query ? { query: String(t.query).trim() } : {}), ...(t.provider ? { provider: String(t.provider).trim() } : {}) }));
+  }
+  let memory = [];
+  if (Array.isArray(obj.memory)) {
+    memory = obj.memory
+      .filter((m) => m && typeof m.text === "string" && m.text.trim())
+      .map((m) => ({ type: typeof m.type === "string" && m.type.trim() ? m.type.trim() : "taste", text: m.text.trim() }));
+  }
+  const result = { say, play, memory };
+  if (typeof obj.reason === "string" && obj.reason.trim()) result.reason = obj.reason.trim();
+  if (typeof obj.segue === "string" && obj.segue.trim()) result.segue = obj.segue.trim();
+  if (typeof obj.confirmRecommend === "boolean") result.confirmRecommend = obj.confirmRecommend;
+  if (typeof obj.confirmQuestion === "string" && obj.confirmQuestion.trim()) result.confirmQuestion = obj.confirmQuestion.trim();
+  return result;
+}
+
 function buildSchema() {
   return {
     type: "object",
@@ -873,6 +926,74 @@ async function mimoTtsSynthesize(text, config) {
     return { ok: true, audio: { mime: "audio/wav", base64: audioData } };
   } catch (e) {
     return { ok: false, error: `mimo request failed: ${e.message || e}` };
+  }
+}
+
+async function runMiMoChat(prompt, schema) {
+  const config = loadTtsConfig();
+  if (!config || !config.apiKey) {
+    return { ok: false, error: "云端 AI 不可用：未配置 API Key（请在 tts-config.json 中设置 api_key）" };
+  }
+
+  const model = "mimo-v2-flash";
+  const endpoint = config.endpoint || "https://api.xiaomimimo.com/v1/chat/completions";
+
+  const systemPrompt = [
+    "你是一个音乐电台DJ助手。你必须只输出一个合法的JSON对象，不要输出任何其他文字、解释、markdown标记或代码围栏。",
+    "JSON schema: {",
+    '  "say": "string (必须，简短的DJ口吻回应)",',
+    '  "reason": "string (可选，推荐理由)",',
+    '  "confirmRecommend": "boolean (可选)",',
+    '  "confirmQuestion": "string (可选，确认提问)",',
+    '  "play": [{"name":"string","artist":"string","album":"string?","query":"string?","provider":"string?"}] (3-5首歌),',
+    '  "segue": "string (可选，100-200字DJ推荐语)",',
+    '  "memory": [{"type":"string","text":"string"}] (1-3条偏好记忆)',
+    "}",
+    "say, play, memory 是必须字段。play 至少3首。memory 至少1条。",
+  ].join("\n");
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: prompt },
+  ];
+
+  const body = JSON.stringify({ model, messages, temperature: 0.7 });
+
+  console.error(`[mimo] chat request: endpoint=${endpoint}, model=${model}, text=${prompt.slice(0, 60)}...`);
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": config.apiKey,
+      },
+      body,
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      return { ok: false, error: `MiMo API error ${resp.status}: ${errText.slice(0, 200)}` };
+    }
+
+    const result = await resp.json();
+    const raw = result?.choices?.[0]?.message?.content;
+    if (!raw) {
+      return { ok: false, error: "MiMo returned empty response" };
+    }
+
+    console.error(`[mimo] chat raw response: ${raw.slice(0, 200)}...`);
+    const parsed = extractJsonFromText(raw);
+    if (!parsed) {
+      return { ok: false, error: "MiMo response was not valid JSON", rawResponse: raw.slice(0, 500) };
+    }
+
+    const structured = validateMimoResult(parsed);
+    console.error(`[mimo] chat success: say=${structured.say.slice(0, 40)}, play=${structured.play.length}`);
+    return { ok: true, result: structured };
+  } catch (e) {
+    return { ok: false, error: `MiMo chat request failed: ${e.message || e}` };
   }
 }
 
@@ -1883,19 +2004,26 @@ readNativeMessageStream(async (msg) => {
       });
       return;
     }
+    if (msg.type === "checkCloudAiStatus") {
+      const config = loadTtsConfig();
+      if (!config || !config.apiKey) {
+        sendNativeMessage({ ok: false, error: "未配置 API Key，请在 tts-config.json 中设置 api_key" });
+        return;
+      }
+      sendNativeMessage({
+        ok: true,
+        model: "mimo-v2-flash",
+        endpoint: config.endpoint || "https://api.xiaomimimo.com/v1/chat/completions",
+        hasApiKey: true,
+      });
+      return;
+    }
     if (msg.type === "welcome") {
       const schema = buildSchema();
       const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
       const djRaw = msg.djName ?? "Claudio";
       const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
       const provider = msg.provider || "paojiao";
-
-      const detection = detectLocalAiTools();
-      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
-      if (!resolved.tool) {
-        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
-        return;
-      }
 
       const scene = await buildWelcomeScene(msg.latitude, msg.longitude, profileSummary);
       const prompt = buildPrompt({
@@ -1908,13 +2036,27 @@ readNativeMessageStream(async (msg) => {
         text: "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 3-5 首适合现在的歌。"
       });
 
-      const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+      const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
+      let resp, toolContext;
+      if (aiProvider === "cloud") {
+        resp = await runMiMoChat(prompt, schema);
+        toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
+      } else {
+        const detection = detectLocalAiTools();
+        const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+        if (!resolved.tool) {
+          sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+          return;
+        }
+        resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+        toolContext = { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode };
+      }
       if (!resp.ok) {
-        sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+        sendNativeMessage({ ...resp, toolContext });
         return;
       }
       const nextProfile = applyMemory(profileSummary, resp.result.memory || []);
-      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext });
       return;
     }
     if (msg.type === "nextBatch") {
@@ -1926,13 +2068,6 @@ readNativeMessageStream(async (msg) => {
       const likedTracks = Array.isArray(msg.likedTracks) ? msg.likedTracks : [];
       const dislikedTracks = Array.isArray(msg.dislikedTracks) ? msg.dislikedTracks : [];
       const recentTracks = Array.isArray(msg.recentTracks) ? msg.recentTracks : [];
-
-      const detection = detectLocalAiTools();
-      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
-      if (!resolved.tool) {
-        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
-        return;
-      }
 
       const listFile = readListFile();
       const listMd = listFile && listFile.ok ? String(listFile.content || "") : "";
@@ -1983,13 +2118,27 @@ readNativeMessageStream(async (msg) => {
         profileSummary || "(空)",
       ].join("\n");
 
-      const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+      const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
+      let resp, toolContext;
+      if (aiProvider === "cloud") {
+        resp = await runMiMoChat(prompt, schema);
+        toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
+      } else {
+        const detection = detectLocalAiTools();
+        const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+        if (!resolved.tool) {
+          sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+          return;
+        }
+        resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+        toolContext = { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode };
+      }
       if (!resp.ok) {
-        sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+        sendNativeMessage({ ...resp, toolContext });
         return;
       }
       const nextProfile = applyMemory(profileSummary, resp.result.memory || []);
-      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+      sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext });
       return;
     }
     if (msg.type !== "chat") {
@@ -2000,21 +2149,28 @@ readNativeMessageStream(async (msg) => {
     const schema = buildSchema();
     const prompt = buildPrompt(msg);
 
-    const detection = detectLocalAiTools();
-    const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
-    if (!resolved.tool) {
-      sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
-      return;
+    const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
+    let resp, toolContext;
+    if (aiProvider === "cloud") {
+      resp = await runMiMoChat(prompt, schema);
+      toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
+    } else {
+      const detection = detectLocalAiTools();
+      const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+      if (!resolved.tool) {
+        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+        return;
+      }
+      resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
+      toolContext = { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode };
     }
-
-    const resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
     if (!resp.ok) {
-      sendNativeMessage({ ...resp, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+      sendNativeMessage({ ...resp, toolContext });
       return;
     }
 
     const nextProfile = applyMemory(msg.profileSummary || "", resp.result.memory || []);
-    sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext: { toolId: resolved.tool.id, toolLabel: resolved.tool.label, mode: resolved.mode } });
+    sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext });
   } catch (err) {
     sendNativeMessage({ ok: false, error: String(err) });
   }

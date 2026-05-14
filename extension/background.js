@@ -454,6 +454,7 @@ async function onChat(text, options = {}) {
     preferences: {
       localAiToolMode: prefs.localAiToolMode || "auto",
       localAiToolId: prefs.localAiToolId || "",
+      aiProvider: prefs.aiProvider || "local",
     },
   };
 
@@ -676,6 +677,11 @@ async function maybeWelcome(port) {
       longitude: hasCoords ? lon : null,
       likedTracks: [],
       dislikedTracks: [],
+      preferences: {
+        localAiToolMode: prefs.localAiToolMode || "auto",
+        localAiToolId: prefs.localAiToolId || "",
+        aiProvider: prefs.aiProvider || "local",
+      },
     };
 
     const resp = await sendNative(payload);
@@ -871,6 +877,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             preferences: {
               localAiToolMode: prefs.localAiToolMode || "auto",
               localAiToolId: prefs.localAiToolId || "",
+              aiProvider: prefs.aiProvider || "local",
             },
           };
 
@@ -981,8 +988,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           preferences: {
             localAiToolMode: prefs.localAiToolMode || "auto",
             localAiToolId: prefs.localAiToolId || "",
+            aiProvider: prefs.aiProvider || "local",
           },
         });
+        sendResponse(res || { ok: false, error: "Host 无响应" });
+        return;
+      }
+      if (msg.type === "checkCloudAiStatus") {
+        const res = await sendNative({ type: "checkCloudAiStatus" });
         sendResponse(res || { ok: false, error: "Host 无响应" });
         return;
       }

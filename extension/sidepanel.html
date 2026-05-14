@@ -231,32 +231,58 @@
             </div>
           </div>
             <div class="settingsDivider"></div>
-            <div class="settingsSectionTitle">本地 AI 工具</div>
+            <div class="settingsSectionTitle">AI 引擎</div>
             <div class="settingsRow">
-              <div class="settingsLabel">检测模式</div>
+              <div class="settingsLabel">运行方式</div>
               <div class="settingsInline">
                 <label class="settingsRadioLabel">
-                  <input type="radio" name="aiToolMode" value="auto" id="aiToolModeAuto" checked />
-                  <span>自动检测</span>
+                  <input type="radio" name="aiProvider" value="local" id="aiProviderLocal" checked />
+                  <span>本地</span>
                 </label>
                 <label class="settingsRadioLabel">
-                  <input type="radio" name="aiToolMode" value="manual" id="aiToolModeManual" />
-                  <span>手动选择</span>
+                  <input type="radio" name="aiProvider" value="cloud" id="aiProviderCloud" />
+                  <span>云端</span>
                 </label>
               </div>
             </div>
-            <div class="settingsRow">
-              <div class="settingsLabel">工具选择</div>
-              <select class="settingsSelect" id="aiToolSelect" disabled></select>
+            <div id="localAiToolSection">
+              <div class="settingsSectionTitle">本地 AI 工具</div>
+              <div class="settingsRow">
+                <div class="settingsLabel">检测模式</div>
+                <div class="settingsInline">
+                  <label class="settingsRadioLabel">
+                    <input type="radio" name="aiToolMode" value="auto" id="aiToolModeAuto" checked />
+                    <span>自动检测</span>
+                  </label>
+                  <label class="settingsRadioLabel">
+                    <input type="radio" name="aiToolMode" value="manual" id="aiToolModeManual" />
+                    <span>手动选择</span>
+                  </label>
+                </div>
+              </div>
+              <div class="settingsRow">
+                <div class="settingsLabel">工具选择</div>
+                <select class="settingsSelect" id="aiToolSelect" disabled></select>
+              </div>
+              <div class="settingsRow">
+                <div class="settingsLabel">当前状态</div>
+                <div class="settingsStatusText" id="aiToolStatus">检测中…</div>
+              </div>
+              <div class="settingsInline">
+                <button class="settingsBtn" id="aiToolRefresh">刷新检测</button>
+              </div>
+              <div class="settingsHint" id="aiToolHint"></div>
             </div>
-            <div class="settingsRow">
-              <div class="settingsLabel">当前状态</div>
-              <div class="settingsStatusText" id="aiToolStatus">检测中…</div>
+            <div id="cloudAiSection" hidden>
+              <div class="settingsSectionTitle">云端 AI</div>
+              <div class="settingsRow">
+                <div class="settingsLabel">当前模型</div>
+                <div class="settingsStatusText" id="cloudAiStatus">检测中…</div>
+              </div>
+              <div class="settingsHint" id="cloudAiHint">
+                使用 MiMo API 调用 mimo-v2-flash 模型。请先在 tts-config.json 中配置 api_key 和 endpoint。
+              </div>
             </div>
-            <div class="settingsInline">
-              <button class="settingsBtn" id="aiToolRefresh">刷新检测</button>
-            </div>
-            <div class="settingsHint" id="aiToolHint"></div>
             <div class="settingsHint" id="settingsHint"></div>
           </div>
         </div>
