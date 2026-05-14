@@ -14,6 +14,19 @@ if "%CLAUDE_BIN%"=="" (
 )
 :claude_found
 
+if "%NODE_BIN%"=="" (
+  where node >nul 2>nul && for /f "delims=" %%N in ('where node 2^>nul') do (
+    set "NODE_BIN=%%N"
+    goto :node_found
+  )
+)
+:node_found
+
+if not "%NODE_BIN%"=="" (
+  "%NODE_BIN%" "%DIR%host.cjs" 2>>"%LOG_FILE%"
+  exit /b %errorlevel%
+)
+
 if "%PY_BIN%"=="" (
   where python3 >nul 2>nul && for /f "delims=" %%P in ('where python3 2^>nul') do (
     set "PY_BIN=%%P"
@@ -33,19 +46,6 @@ if not "%PY_BIN%"=="" (
   )
 )
 
-if "%NODE_BIN%"=="" (
-  where node >nul 2>nul && for /f "delims=" %%N in ('where node 2^>nul') do (
-    set "NODE_BIN=%%N"
-    goto :node_found
-  )
-)
-:node_found
-
-if "%NODE_BIN%"=="" (
-  echo ClaudefmHost: node not found. Please install Node.js (>=18) and retry. 1>&2
-  exit /b 127
-)
-
-"%NODE_BIN%" "%DIR%host.cjs" 2>>"%LOG_FILE%"
-exit /b %errorlevel%
+echo ClaudefmHost: node not found. Please install Node.js (>=18) and retry. 1>&2
+exit /b 127
 
