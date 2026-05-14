@@ -952,7 +952,7 @@ async function runMiMoChat(prompt, schema, lang) {
   const isEn = lang === "en";
   const systemPrompt = [
     ht("host.mimo.systemPrompt", lang),
-    isEn ? "JSON schema:" : "JSON schema: {",
+    "JSON schema: {",
     '  "say": "' + (isEn ? "string (required, brief DJ response)" : "string (必须，简短的DJ口吻回应)") + '",',
     '  "reason": "' + (isEn ? "string (optional, recommendation reason)" : "string (可选，推荐理由)") + '",',
     '  "confirmRecommend": "boolean (' + (isEn ? "optional" : "可选") + ')",',

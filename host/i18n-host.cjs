@@ -6,7 +6,12 @@
 
 function t(key, lang, params) {
   const isEn = lang === "en";
-  let val = isEn ? (EN[key] || ZH[key] || key) : (ZH[key] || key);
+  let val;
+  if (isEn) {
+    val = EN[key] || ZH[key + ".en"] || ZH[key] || key;
+  } else {
+    val = ZH[key] || key;
+  }
   if (params && typeof params === "object") {
     for (const [k, v] of Object.entries(params)) {
       val = val.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
