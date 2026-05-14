@@ -8,6 +8,11 @@ let providerTabId = null;
 let externalInterruptActive = false;
 let welcomeInFlight = false;
 let autoRecommendDone = false;
+let currentLang = "zh";
+
+function bgT(zh, en) {
+  return currentLang === "en" ? en : zh;
+}
 let creatingOffscreen = null;
 let playerStateCache = {
   queue: [],
@@ -442,6 +447,7 @@ async function onChat(text, options = {}) {
   const payload = {
     type: "chat",
     text,
+    lang: currentLang,
     djName: prefs.djName ?? "Claudio",
     provider: "paojiao",
     profileSummary: profileSummary ?? "",
@@ -468,7 +474,7 @@ async function onChat(text, options = {}) {
         : `${toolLabel} 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
     broadcast({
       type: "chatResult",
-      result: { say: resp?.error || "Claude Code 不可用或 Host 未安装。", play: [] },
+      result: { say: resp?.error || bgT("Claude Code 不可用或 Host 未安装。", "Claude Code unavailable or Host not installed."), play: [] },
     });
     broadcast({ type: "chatResult", result: { say: hint, play: [] } });
     return;
@@ -521,6 +527,7 @@ async function exportMemoryMd() {
   const prefs = await getPreferences();
   return await sendNative({
     type: "optimizeMemoryFile",
+    lang: currentLang,
     djName: prefs.djName ?? "Claudio",
     profileSummary: profileSummary ?? "",
     templatePath: MEMORY_TEMPLATE_PATH,
@@ -630,13 +637,14 @@ async function maybeWelcome(port) {
   try {
     const ensure = await sendNative({
       type: "ensureMusicFile",
+      lang: currentLang,
       templatePath: MEMORY_TEMPLATE_PATH,
     });
     if (!ensure?.ok) {
       const extensionId = chrome.runtime.id;
       broadcast({
         type: "chatResult",
-        result: { say: ensure?.error || "初始化 music.md 失败。", play: [] },
+        result: { say: ensure?.error || bgT("初始化 music.md 失败。", "Failed to initialize music.md."), play: [] },
       });
       broadcast({
         type: "chatResult",
@@ -651,7 +659,10 @@ async function maybeWelcome(port) {
       broadcast({
         type: "chatResult",
         result: {
-          say: `已初始化 music.md（模板来自 ${MEMORY_TEMPLATE_PATH}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。`,
+          say: bgT(
+            `已初始化 music.md（模板来自 ${MEMORY_TEMPLATE_PATH}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。`,
+            `Initialized music.md (template from ${MEMORY_TEMPLATE_PATH}). You can find it in your local Claudefm data directory (macOS: ~/Documents/Claudefm; Linux: ~/.local/share/Claudefm; Windows: %APPDATA%\\Claudefm).`
+          ),
           play: [],
         },
       });
@@ -669,6 +680,7 @@ async function maybeWelcome(port) {
 
     const payload = {
       type: "welcome",
+      lang: currentLang,
       djName: prefs.djName ?? "Claudio",
       provider: "paojiao",
       profileSummary: profileSummary ?? "",
@@ -691,6 +703,7 @@ async function maybeWelcome(port) {
         try {
           void sendNative({
             type: "optimizeMemoryFile",
+            lang: currentLang,
             djName: prefs.djName ?? "Claudio",
             profileSummary: resp.profileSummary ?? profileSummary ?? "",
             templatePath: MEMORY_TEMPLATE_PATH,
@@ -713,7 +726,7 @@ async function maybeWelcome(port) {
     } else {
       broadcast({
         type: "chatResult",
-        result: { say: resp?.error || "欢迎语生成失败。", play: [] },
+        result: { say: resp?.error || bgT("欢迎语生成失败。", "Welcome message generation failed."), play: [] },
       });
     }
   } finally {
@@ -755,6 +768,7 @@ chrome.runtime.onConnect.addListener(async (port) => {
   port.onMessage.addListener((msg) => {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "ready") {
+      if (msg.lang) currentLang = String(msg.lang);
       void ensureOffscreenDocument();
       try {
         port.postMessage({ type: "player.state", state: playerStateCache, reason: "connect" });
@@ -839,7 +853,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const message = error?.message ? String(error.message) : String(error);
           broadcast({
             type: "chatResult",
-            result: { say: `发生错误：${message}`, play: [] },
+            result: { say: bgT(`发生错误：${message}`, `Error: ${message}`), play: [] },
           });
         });
         return;
@@ -868,6 +882,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
           const payload = {
             type: "nextBatch",
+            lang: currentLang,
             recentTracks: msg.recentTracks || [],
             djName: prefs.djName ?? "Claudio",
             provider: "paojiao",
@@ -962,6 +977,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
         const res = await sendNative({
           type: "lyricInterlude",
+          lang: currentLang,
           djName: prefs.djName ?? "Claudio",
           profileSummary: profileSummary ?? "",
           tracks,
@@ -978,33 +994,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.type === "detectLocalAiTools") {
         const res = await sendNative({ type: "detectLocalAiTools", forceRefresh: Boolean(msg.forceRefresh) });
-        sendResponse(res || { ok: false, error: "Host 无响应" });
+        sendResponse(res || { ok: false, error: bgT("Host 无响应", "Host not responding") });
         return;
       }
       if (msg.type === "getResolvedLocalAiTool") {
         const prefs = await getPreferences();
         const res = await sendNative({
           type: "getResolvedLocalAiTool",
+          lang: currentLang,
           preferences: {
             localAiToolMode: prefs.localAiToolMode || "auto",
             localAiToolId: prefs.localAiToolId || "",
             aiProvider: prefs.aiProvider || "local",
           },
         });
-        sendResponse(res || { ok: false, error: "Host 无响应" });
+        sendResponse(res || { ok: false, error: bgT("Host 无响应", "Host not responding") });
         return;
       }
       if (msg.type === "checkCloudAiStatus") {
         const res = await sendNative({ type: "checkCloudAiStatus" });
-        sendResponse(res || { ok: false, error: "Host 无响应" });
+        sendResponse(res || { ok: false, error: bgT("Host 无响应", "Host not responding") });
         return;
       }
-      sendResponse({ ok: false, error: "unknown message type" });
+      sendResponse({ ok: false, error: bgT("未知消息类型", "Unknown message type") });
     } catch (error) {
       const message = error?.message ? String(error.message) : String(error);
       broadcast({
         type: "chatResult",
-        result: { say: `发生错误：${message}`, play: [] },
+        result: { say: bgT(`发生错误：${message}`, `Error: ${message}`), play: [] },
       });
       sendResponse({ ok: false, error: message });
     }

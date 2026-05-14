@@ -11,7 +11,7 @@
       <div class="top">
         <div class="topRow">
           <div class="brand">
-            <button class="avatarBtn" id="avatarBtn" aria-label="设置头像">
+            <button class="avatarBtn" id="avatarBtn" aria-label="设置头像" data-i18n-aria="设置头像">
               <img class="avatarImg" id="avatarImg" alt="" />
               <div class="avatarFallback" id="avatarFallback">DJ</div>
             </button>
@@ -25,7 +25,7 @@
             </div>
           </div>
           <div class="topActions">
-            <button class="iconBtn iconBtnSoft" id="btnSoul" aria-label="灵魂">
+            <button class="iconBtn iconBtnSoft" id="btnSoul" aria-label="灵魂" data-i18n-aria="灵魂">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" />
@@ -33,7 +33,7 @@
                 </svg>
               </span>
             </button>
-            <button class="iconBtn iconBtnSoft" id="btnHistory" aria-label="历史">
+            <button class="iconBtn iconBtnSoft" id="btnHistory" aria-label="历史" data-i18n-aria="历史">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -42,7 +42,7 @@
                 </svg>
               </span>
             </button>
-            <button class="iconBtn iconBtnSoft" id="btnSettings" aria-label="设置">
+            <button class="iconBtn iconBtnSoft" id="btnSettings" aria-label="设置" data-i18n-aria="设置">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M4 21v-7" />
@@ -93,7 +93,7 @@
               <input class="playerProgress" id="progress" type="range" min="0" max="1000" step="1" value="0" />
             </div>
             <div class="playerHeader">
-              <button class="iconBtn iconBtnSoft" id="btnQueue" aria-label="歌单">
+              <button class="iconBtn iconBtnSoft" id="btnQueue" aria-label="歌单" data-i18n-aria="歌单">
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M8 6h11" />
@@ -109,11 +109,11 @@
               <div class="playerTime" id="trackTime">00:00 / 00:00</div>
             </div>
           </div>
-          <div class="interrupt" id="interruptHint" hidden>检测到其他页面播放音频，电台已暂停</div>
+          <div class="interrupt" id="interruptHint" data-i18n="检测到其他页面播放音频，电台已暂停" hidden>检测到其他页面播放音频，电台已暂停</div>
         </div>
         <div class="queue" id="queue">
           <div class="queueTitleRow">
-            <div class="queueTitle">当前歌单</div>
+            <div class="queueTitle" data-i18n="当前歌单">当前歌单</div>
             <div class="queueCount" id="queueCount">（0）</div>
           </div>
           <div id="queueList"></div>
@@ -123,8 +123,8 @@
       <div class="memoryPanel" id="soulPanel" hidden>
         <div class="memoryCard" role="dialog" aria-modal="true" aria-label="灵魂">
           <div class="memoryHeader">
-            <div class="memoryTitle">灵魂</div>
-            <button class="iconBtn iconBtnSoft" id="btnSoulClose" aria-label="关闭">
+            <div class="memoryTitle" data-i18n="灵魂">灵魂</div>
+            <button class="iconBtn iconBtnSoft" id="btnSoulClose" aria-label="关闭" data-i18n-aria="关闭">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6L6 18" />
@@ -142,14 +142,14 @@
         <div class="memoryCard" role="dialog" aria-modal="true" aria-label="历史">
           <div class="historyHeader">
             <div class="historyLeft">
-              <button class="iconBtn iconBtnSoft" id="btnHistoryBack" aria-label="返回" hidden>
+              <button class="iconBtn iconBtnSoft" id="btnHistoryBack" aria-label="返回" data-i18n-aria="返回" hidden>
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M15 18l-6-6 6-6" />
                   </svg>
                 </span>
               </button>
-              <button class="iconBtn iconBtnSoft" id="btnHistoryImport" aria-label="导入" hidden>
+              <button class="iconBtn iconBtnSoft" id="btnHistoryImport" aria-label="导入" data-i18n-aria="导入" hidden>
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 3v10" />
@@ -161,8 +161,8 @@
               </button>
               <input id="historyImportFile" type="file" accept=".txt,.csv,text/plain,text/csv" hidden />
             </div>
-            <div class="historyTitle" id="historyTitle">历史</div>
-            <button class="iconBtn iconBtnSoft" id="btnHistoryClose" aria-label="关闭">
+            <div class="historyTitle" id="historyTitle" data-i18n="历史">历史</div>
+            <button class="iconBtn iconBtnSoft" id="btnHistoryClose" aria-label="关闭" data-i18n-aria="关闭">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6L6 18" />
@@ -193,8 +193,8 @@
       <div class="memoryPanel" id="settingsPanel" hidden>
         <div class="memoryCard" role="dialog" aria-modal="true" aria-label="设置">
           <div class="memoryHeader">
-            <div class="memoryTitle">设置</div>
-            <button class="iconBtn iconBtnSoft" id="btnSettingsClose" aria-label="关闭">
+            <div class="memoryTitle" data-i18n="设置">设置</div>
+            <button class="iconBtn iconBtnSoft" id="btnSettingsClose" aria-label="关闭" data-i18n-aria="关闭">
               <span class="iconSlot" aria-hidden="true">
                 <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M18 6L6 18" />
@@ -206,77 +206,77 @@
           <div class="memoryStatus" id="settingsStatus"></div>
           <div class="settingsBody">
             <div class="settingsRow">
-              <div class="settingsLabel">DJ 名称</div>
+              <div class="settingsLabel" data-i18n="DJ 名称">DJ 名称</div>
               <div class="settingsInline">
                 <input class="settingsInput" id="settingsDjNameInput" maxlength="8" />
-                <button class="settingsBtn" id="settingsDjNameSave">保存</button>
+                <button class="settingsBtn" id="settingsDjNameSave" data-i18n="保存">保存</button>
               </div>
             </div>
           <div class="settingsRow">
-            <div class="settingsLabel">收起侧边栏保留会话</div>
+            <div class="settingsLabel" data-i18n="收起侧边栏保留会话">收起侧边栏保留会话</div>
             <div class="settingsInline">
               <label class="settingsSwitch">
-                <input id="settingsKeepSession" type="checkbox" role="switch" aria-label="收起侧边栏保留会话" />
+                <input id="settingsKeepSession" type="checkbox" role="switch" aria-label="收起侧边栏保留会话" data-i18n-aria="收起侧边栏保留会话" />
                 <span class="settingsSwitchTrack" aria-hidden="true"></span>
               </label>
             </div>
           </div>
           <div class="settingsRow">
-            <div class="settingsLabel">DJ 推荐自动播放</div>
+            <div class="settingsLabel" data-i18n="DJ 推荐自动播放">DJ 推荐自动播放</div>
             <div class="settingsInline">
               <label class="settingsSwitch">
-                <input id="settingsAutoRecommend" type="checkbox" role="switch" aria-label="DJ 推荐自动播放" />
+                <input id="settingsAutoRecommend" type="checkbox" role="switch" aria-label="DJ 推荐自动播放" data-i18n-aria="DJ 推荐自动播放" />
                 <span class="settingsSwitchTrack" aria-hidden="true"></span>
               </label>
             </div>
           </div>
             <div class="settingsDivider"></div>
-            <div class="settingsSectionTitle">AI 引擎</div>
+            <div class="settingsSectionTitle" data-i18n="AI 引擎">AI 引擎</div>
             <div class="settingsRow">
-              <div class="settingsLabel">运行方式</div>
+              <div class="settingsLabel" data-i18n="运行方式">运行方式</div>
               <div class="settingsInline">
                 <label class="settingsRadioLabel">
                   <input type="radio" name="aiProvider" value="local" id="aiProviderLocal" checked />
-                  <span>本地</span>
+                  <span data-i18n="本地">本地</span>
                 </label>
                 <label class="settingsRadioLabel">
                   <input type="radio" name="aiProvider" value="cloud" id="aiProviderCloud" />
-                  <span>云端</span>
+                  <span data-i18n="云端">云端</span>
                 </label>
               </div>
             </div>
             <div id="localAiToolSection">
-              <div class="settingsSectionTitle">本地 AI 工具</div>
+              <div class="settingsSectionTitle" data-i18n="本地 AI 工具">本地 AI 工具</div>
               <div class="settingsRow">
-                <div class="settingsLabel">检测模式</div>
+                <div class="settingsLabel" data-i18n="检测模式">检测模式</div>
                 <div class="settingsInline">
                   <label class="settingsRadioLabel">
                     <input type="radio" name="aiToolMode" value="auto" id="aiToolModeAuto" checked />
-                    <span>自动检测</span>
+                    <span data-i18n="自动检测">自动检测</span>
                   </label>
                   <label class="settingsRadioLabel">
                     <input type="radio" name="aiToolMode" value="manual" id="aiToolModeManual" />
-                    <span>手动选择</span>
+                    <span data-i18n="手动选择">手动选择</span>
                   </label>
                 </div>
               </div>
               <div class="settingsRow">
-                <div class="settingsLabel">工具选择</div>
+                <div class="settingsLabel" data-i18n="工具选择">工具选择</div>
                 <select class="settingsSelect" id="aiToolSelect" disabled></select>
               </div>
               <div class="settingsRow">
-                <div class="settingsLabel">当前状态</div>
+                <div class="settingsLabel" data-i18n="当前状态">当前状态</div>
                 <div class="settingsStatusText" id="aiToolStatus">检测中…</div>
               </div>
               <div class="settingsInline">
-                <button class="settingsBtn" id="aiToolRefresh">刷新检测</button>
+                <button class="settingsBtn" id="aiToolRefresh" data-i18n="刷新检测">刷新检测</button>
               </div>
               <div class="settingsHint" id="aiToolHint"></div>
             </div>
             <div id="cloudAiSection" hidden>
-              <div class="settingsSectionTitle">云端 AI</div>
+              <div class="settingsSectionTitle" data-i18n="云端 AI">云端 AI</div>
               <div class="settingsRow">
-                <div class="settingsLabel">当前模型</div>
+                <div class="settingsLabel" data-i18n="当前模型">当前模型</div>
                 <div class="settingsStatusText" id="cloudAiStatus">检测中…</div>
               </div>
               <div class="settingsHint" id="cloudAiHint">
@@ -294,10 +294,10 @@
         <div class="composer">
           <div class="composerBar">
             <div class="composerInputRow">
-              <textarea id="input" rows="1" placeholder="与 电台 DJ 聊聊"></textarea>
+              <textarea id="input" rows="1" placeholder="与 电台 DJ 聊聊" data-i18n-placeholder="与 电台 DJ 聊聊"></textarea>
             </div>
             <div class="composerActionRow">
-              <button class="toolBtn" id="btnClear" aria-label="清空并开启新会话">
+              <button class="toolBtn" id="btnClear" aria-label="清空并开启新会话" data-i18n-aria="清空并开启新会话">
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M5 6.5h14a3.5 3.5 0 0 1 3.5 3.5v6A3.5 3.5 0 0 1 19 19.5H10l-4.5 3v-3H5A3.5 3.5 0 0 1 1.5 16v-6A3.5 3.5 0 0 1 5 6.5Z" />
@@ -306,7 +306,7 @@
                   </svg>
                 </span>
               </button>
-              <button class="toolBtn" id="btnMic" aria-label="语音输入" aria-pressed="false">
+              <button class="toolBtn" id="btnMic" aria-label="语音输入" data-i18n-aria="语音输入" aria-pressed="false">
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 15a3 3 0 0 0 3-3V8a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3z" />
@@ -315,7 +315,7 @@
                   </svg>
                 </span>
               </button>
-              <button class="sendBtn" id="send" aria-label="发送" disabled>
+              <button class="sendBtn" id="send" aria-label="发送" data-i18n-aria="发送" disabled>
                 <span class="iconSlot" aria-hidden="true">
                   <svg class="btnIcon" data-icon="send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M5 12h12" />
@@ -335,6 +335,7 @@
       <audio id="audio"></audio>
     </div>
 
+    <script src="i18n.js"></script>
     <script type="module" src="sidepanel.js"></script>
   </body>
 </html>

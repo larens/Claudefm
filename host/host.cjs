@@ -6,11 +6,17 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { AI_TOOLS, getToolById } = require("./ai-tools.cjs");
+const { t: ht, weatherCodeToLabel, getTimeSegment: getLangTimeSegment } = require("./i18n-host.cjs");
 
-function resolveTemplatePath(inputPath) {
+function resolveTemplatePath(inputPath, lang) {
   const provided = inputPath ? String(inputPath) : "";
   if (provided && fs.existsSync(provided)) return provided;
-  const fallback = path.resolve(__dirname, "..", "docs", "superpowers", "specs", "music_user_memory.md");
+  const base = path.resolve(__dirname, "..", "docs", "superpowers", "specs");
+  if (lang === "en") {
+    const enPath = path.join(base, "music_user_memory.en.md");
+    if (fs.existsSync(enPath)) return enPath;
+  }
+  const fallback = path.join(base, "music_user_memory.md");
   if (fs.existsSync(fallback)) return fallback;
   return "";
 }
@@ -425,11 +431,12 @@ function extractJsonFromText(raw) {
   return null;
 }
 
-function validateMimoResult(obj) {
+function validateMimoResult(obj, lang) {
+  const defaultSay = ht("host.default.say", lang);
   if (!obj || typeof obj !== "object") {
-    return { say: "正在为你准备歌单", play: [], memory: [] };
+    return { say: defaultSay, play: [], memory: [] };
   }
-  const say = typeof obj.say === "string" && obj.say.trim() ? obj.say.trim() : "正在为你准备歌单";
+  const say = typeof obj.say === "string" && obj.say.trim() ? obj.say.trim() : defaultSay;
   let play = [];
   if (Array.isArray(obj.play)) {
     play = obj.play
@@ -475,7 +482,7 @@ function buildSchema() {
           required: ["name", "artist"]
         }
       },
-      segue: { type: "string", description: "电台 DJ 推荐语，100-200字，包含开场问候、推荐理由、歌曲亮点、情感共鸣、自然过渡" },
+      segue: { type: "string", description: "电台 DJ 推荐语 / DJ recommendation, 100-200字/words" },
       memory: {
         type: "array",
         items: {
@@ -519,6 +526,8 @@ function buildPrompt(input) {
   const forceRecommend = Boolean(input.forceRecommend);
   const likedTracks = Array.isArray(input.likedTracks) ? input.likedTracks : [];
   const dislikedTracks = Array.isArray(input.dislikedTracks) ? input.dislikedTracks : [];
+  const lang = input.lang || "zh";
+  const isEn = lang === "en";
   const listFile = readListFile();
   const listMd = listFile && listFile.ok ? String(listFile.content || "") : "";
   const memMd = readMusicMemoryFile();
@@ -536,49 +545,51 @@ function buildPrompt(input) {
       .join("\n");
 
   const instructions = [
-    `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
-    "你的任务：根据用户消息、画像摘要、场景信息，给出电台式回应。",
-    `当前音源来源偏好：${provider}。`,
-    "必须输出 JSON，字段遵循给定 schema。",
-    "无论 forceRecommend 是否为 true，say 都必须对用户消息做出明确回应，禁止输出空字符串或只包含空白。",
-    "当 forceRecommend=false 且用户没有明确要求推荐歌单，但语义上看起来“可能想听歌/想要推荐”（例如：表达想听点音乐、想来点歌、情绪/场景暗示需要音乐但没说推荐）时：请先确认。",
-    "确认方式：confirmRecommend=true，confirmQuestion 用一句简短中文提问（例如“要不要我给你推荐一份歌单并直接开始播放？”），并且 play 输出空数组、segue 输出空字符串。",
-    "当 confirmRecommend=true 时，不要在 say 里直接给出歌单内容，say 只要回应用户并引导对方确认即可。",
-    "当 forceRecommend=true 时，必须推荐 3-5 首歌（play 长度 3-5），segue 必须是一段完整的电台 DJ 推荐语（100-200字），包含：开场问候、推荐理由、歌曲亮点介绍、情感共鸣点、自然过渡到播放。风格要像真实电台主播一样自然亲切、有感染力。",
-    "当 forceRecommend=false 且用户明确表示要推荐/要歌单/要新歌/要听歌时：直接推荐 3-5 首歌（play 长度 3-5），confirmRecommend=false，segue 必须是一段完整的电台 DJ 推荐语（100-200字）。",
-    "当 forceRecommend=false 且与音乐无关时：confirmRecommend=false，play 输出空数组，segue 输出空字符串。",
-    "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
-    "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重（更容易出现）。",
-    "每首歌只输出 name/artist；album/query/provider 可选。",
-    "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
-    force ? "这是一次画像自检更新，请务必输出 2-3 条高质量 memory 用于纠偏与巩固偏好。" : ""
+    ht("host.djRole", lang, {0: dj}),
+    ht("host.djTask", lang),
+    ht("host.djProvider", lang, {0: provider}),
+    ht("host.djJsonSchema", lang),
+    ht("host.djSayRequired", lang),
+    ht("host.djConfirmHint", lang),
+    ht("host.djConfirmWay", lang),
+    ht("host.djConfirmNoSay", lang),
+    ht("host.djForceRecommend", lang),
+    ht("host.djExplicitRecommend", lang),
+    ht("host.djNoMusic", lang),
+    ht("host.djDislikedConstraint", lang),
+    ht("host.djLikedPreference", lang),
+    ht("host.djOutputFormat", lang),
+    ht("host.djMemoryHint", lang),
+    force ? ht("host.djProfileRefresh", lang) : ""
   ].filter(Boolean);
+
+  const empty = ht("host.empty", lang);
 
   return [
     instructions.join("\n"),
     "",
-    "【forceRecommend】",
+    isEn ? "[forceRecommend]" : "【forceRecommend】",
     forceRecommend ? "true" : "false",
     "",
-    "【likedTracks（赞）】",
-    fmtTracks(likedTracks) || "(空)",
+    isEn ? "[likedTracks (liked)]" : "【likedTracks（赞）】",
+    fmtTracks(likedTracks) || empty,
     "",
-    "【dislikedTracks（踩）】",
-    fmtTracks(dislikedTracks) || "(空)",
+    isEn ? "[dislikedTracks (disliked)]" : "【dislikedTracks（踩）】",
+    fmtTracks(dislikedTracks) || empty,
     "",
-    "【历史播放歌单（list.md 摘要）】",
-    listMd.trim() || "(空)",
+    isEn ? "[Playlist History (list.md summary)]" : "【历史播放歌单（list.md 摘要）】",
+    listMd.trim() || empty,
     "",
-    "【历史记忆文件（music.md 摘要）】",
-    memMd.trim() || "(空)",
+    isEn ? "[Memory File (music.md summary)]" : "【历史记忆文件（music.md 摘要）】",
+    memMd.trim() || empty,
     "",
-    "【画像摘要】",
-    profile || "(空)",
+    isEn ? "[Profile Summary]" : "【画像摘要】",
+    profile || empty,
     "",
-    "【场景信息】",
-    scene || "(空)",
+    isEn ? "[Scene Info]" : "【场景信息】",
+    scene || empty,
     "",
-    "【用户消息】",
+    isEn ? "[User Message]" : "【用户消息】",
     input.text || ""
   ].join("\n");
 }
@@ -929,27 +940,28 @@ async function mimoTtsSynthesize(text, config) {
   }
 }
 
-async function runMiMoChat(prompt, schema) {
+async function runMiMoChat(prompt, schema, lang) {
   const config = loadTtsConfig();
   if (!config || !config.apiKey) {
-    return { ok: false, error: "云端 AI 不可用：未配置 API Key（请在 tts-config.json 中设置 api_key）" };
+    return { ok: false, error: ht("host.error.cloudUnavailable", lang) };
   }
 
   const model = "mimo-v2-flash";
   const endpoint = config.endpoint || "https://api.xiaomimimo.com/v1/chat/completions";
 
+  const isEn = lang === "en";
   const systemPrompt = [
-    "你是一个音乐电台DJ助手。你必须只输出一个合法的JSON对象，不要输出任何其他文字、解释、markdown标记或代码围栏。",
-    "JSON schema: {",
-    '  "say": "string (必须，简短的DJ口吻回应)",',
-    '  "reason": "string (可选，推荐理由)",',
-    '  "confirmRecommend": "boolean (可选)",',
-    '  "confirmQuestion": "string (可选，确认提问)",',
-    '  "play": [{"name":"string","artist":"string","album":"string?","query":"string?","provider":"string?"}] (3-5首歌),',
-    '  "segue": "string (可选，100-200字DJ推荐语)",',
-    '  "memory": [{"type":"string","text":"string"}] (1-3条偏好记忆)',
+    ht("host.mimo.systemPrompt", lang),
+    isEn ? "JSON schema:" : "JSON schema: {",
+    '  "say": "' + (isEn ? "string (required, brief DJ response)" : "string (必须，简短的DJ口吻回应)") + '",',
+    '  "reason": "' + (isEn ? "string (optional, recommendation reason)" : "string (可选，推荐理由)") + '",',
+    '  "confirmRecommend": "boolean (' + (isEn ? "optional" : "可选") + ')",',
+    '  "confirmQuestion": "' + (isEn ? "string (optional, confirmation question)" : "string (可选，确认提问)") + '",',
+    '  "play": [{"name":"string","artist":"string","album":"string?","query":"string?","provider":"string?"}] (' + (isEn ? "3-5 songs" : "3-5首歌") + '),',
+    '  "segue": "string (' + (isEn ? "optional, 100-200 word DJ recommendation" : "可选，100-200字DJ推荐语") + ')",',
+    '  "memory": [{"type":"string","text":"string"}] (' + (isEn ? "1-3 preference memories" : "1-3条偏好记忆") + ')',
     "}",
-    "say, play, memory 是必须字段。play 至少3首。memory 至少1条。",
+    ht("host.mimo.requiredFields", lang),
   ].join("\n");
 
   const messages = [
@@ -989,7 +1001,7 @@ async function runMiMoChat(prompt, schema) {
       return { ok: false, error: "MiMo response was not valid JSON", rawResponse: raw.slice(0, 500) };
     }
 
-    const structured = validateMimoResult(parsed);
+    const structured = validateMimoResult(parsed, lang);
     console.error(`[mimo] chat success: say=${structured.say.slice(0, 40)}, play=${structured.play.length}`);
     return { ok: true, result: structured };
   } catch (e) {
@@ -1084,7 +1096,7 @@ function normalizeTrackKey(name, artist) {
     String(v || "")
       .toLowerCase()
       .trim()
-      .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+      .replace(/[\s\-_–—·•、，,。.!！?？'"“”"‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
   return `${strip(name)}|${strip(artist)}`;
 }
 
@@ -1281,6 +1293,8 @@ function buildLyricInterludePrompt(input, tracksWithLyrics) {
   const djRaw = input && typeof input === "object" ? input.djName ?? "Claudio" : "Claudio";
   const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
   const profile = input && typeof input === "object" ? String(input.profileSummary || "") : "";
+  const lang = input && typeof input === "object" ? (input.lang || "zh") : "zh";
+  const isEn = lang === "en";
 
   const blocks = [];
   tracksWithLyrics.forEach((t, i) => {
@@ -1292,70 +1306,35 @@ function buildLyricInterludePrompt(input, tracksWithLyrics) {
   });
 
   const instructions = [
-    `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
-    "你将做一段电台插播：基于本段 3-5 首歌的歌词，做一次“合集情绪串讲”。",
-    "要求：",
-    "- 只输出 JSON，字段遵循 schema（只有 text）。",
-    "- text 是可直接口播的一段话，约 120-220 个汉字。",
-    "- 重点写情绪、意象、共鸣与转场，不要逐首念歌名清单。",
-    "- 可以点到为止引用少量短句（每句不超过 14 个汉字），避免大段原文。",
-    "- 结尾要自然引出下一首，不要问问题。"
+    ht("host.interlude.role", lang, {0: dj}),
+    ht("host.interlude.task", lang),
+    isEn ? "Requirements:" : "要求：",
+    `- ${ht("host.interlude.req1", lang)}`,
+    `- ${ht("host.interlude.req2", lang)}`,
+    `- ${ht("host.interlude.req3", lang)}`,
+    `- ${ht("host.interlude.req4", lang)}`,
+    `- ${ht("host.interlude.req5", lang)}`
   ];
+
+  const empty = ht("host.empty", lang);
 
   return [
     instructions.join("\n"),
     "",
-    "【画像摘要】",
-    profile || "(空)",
+    isEn ? "[Profile Summary]" : "【画像摘要】",
+    profile || empty,
     "",
-    "【本段歌词】",
-    blocks.length ? blocks.join("\n\n") : "(空)"
+    isEn ? "[Lyrics This Segment]" : "【本段歌词】",
+    blocks.length ? blocks.join("\n\n") : empty
   ].join("\n");
 }
 
 function weatherCodeToZh(code) {
-  const c = Number(code);
-  if (!Number.isFinite(c)) return "";
-  const mapping = {
-    0: "晴",
-    1: "大部晴朗",
-    2: "多云",
-    3: "阴",
-    45: "雾",
-    48: "雾凇",
-    51: "毛毛雨",
-    53: "毛毛雨",
-    55: "毛毛雨",
-    56: "冻毛毛雨",
-    57: "冻毛毛雨",
-    61: "小雨",
-    63: "中雨",
-    65: "大雨",
-    66: "冻雨",
-    67: "冻雨",
-    71: "小雪",
-    73: "中雪",
-    75: "大雪",
-    77: "雪粒",
-    80: "阵雨",
-    81: "阵雨",
-    82: "强阵雨",
-    85: "阵雪",
-    86: "强阵雪",
-    95: "雷暴",
-    96: "雷暴伴冰雹",
-    99: "强雷暴伴冰雹"
-  };
-  return mapping[String(c)] || mapping[c] || "";
+  return weatherCodeToLabel(code, "zh");
 }
 
 function getTimeSegment(date = new Date()) {
-  const h = date.getHours();
-  if (h >= 5 && h < 11) return "早上";
-  if (h >= 11 && h < 14) return "中午";
-  if (h >= 14 && h < 18) return "下午";
-  if (h >= 18 && h < 23) return "晚上";
-  return "深夜";
+  return getLangTimeSegment(date, "zh");
 }
 
 function readMusicMemoryFile(maxChars = 6000) {
@@ -1399,11 +1378,13 @@ async function getWeather(latitude, longitude) {
   }
 }
 
-async function buildWelcomeScene(latitude, longitude, profileSummary) {
+async function buildWelcomeScene(latitude, longitude, profileSummary, lang) {
+  const isEn = lang === "en";
   const now = new Date();
   const pad2 = (n) => String(n).padStart(2, "0");
   const dateStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-  const pieces = [`今天是 ${dateStr}，${getTimeSegment(now)}`];
+  const timeSeg = getLangTimeSegment(now, lang);
+  const pieces = [ht("host.scene.date", lang, {0: dateStr, 1: timeSeg})];
 
   const lat = Number(latitude);
   const lon = Number(longitude);
@@ -1416,28 +1397,30 @@ async function buildWelcomeScene(latitude, longitude, profileSummary) {
     weather = await getWeather(lat, lon);
   }
 
-  if (location) pieces.push(`你在 ${location}`);
+  const empty = ht("host.empty", lang);
+
+  if (location) pieces.push(ht("host.scene.location", lang, {0: location}));
   if (weather) {
-    const desc = weatherCodeToZh(weather.weathercode);
+    const desc = weatherCodeToLabel(weather.weathercode, lang);
     const t = weather.temperature;
     const w = weather.windspeed;
-    let wx = "天气信息";
-    if (desc && Number.isFinite(Number(t))) wx = `${desc}，${t}℃`;
+    let wx = isEn ? "weather info" : "天气信息";
+    if (desc && Number.isFinite(Number(t))) wx = `${desc}, ${t}℃`;
     else if (desc) wx = desc;
     else if (Number.isFinite(Number(t))) wx = `${t}℃`;
-    if (Number.isFinite(Number(w))) wx = `${wx}，风速 ${w}`;
-    pieces.push(`当前${wx}`);
+    if (Number.isFinite(Number(w))) wx = isEn ? ht("host.weather.wind", lang, {0: wx, 1: w}) : `${wx}，风速 ${w}`;
+    pieces.push(ht("host.scene.weather", lang, {0: wx}));
   }
 
   const memFile = readMusicMemoryFile();
   const lines = [];
-  lines.push(pieces.join("；"));
+  lines.push(pieces.join(isEn ? "; " : "；"));
   lines.push("");
-  lines.push("【历史记忆（profileSummary）】");
-  lines.push(String(profileSummary || "").trim() || "(空)");
+  lines.push(isEn ? "[History Memory (profileSummary)]" : "【历史记忆（profileSummary）】");
+  lines.push(String(profileSummary || "").trim() || empty);
   if (memFile) {
     lines.push("");
-    lines.push("【历史记忆文件（music.md 摘要）】");
+    lines.push(isEn ? "[History Memory File (music.md summary)]" : "【历史记忆文件（music.md 摘要）】");
     lines.push(memFile);
   }
   return lines.join("\n").trim();
@@ -1502,12 +1485,13 @@ function readMemoryFile() {
   return { ok: true, path: filePath, content: sliced };
 }
 
-function ensureListFile() {
+function ensureListFile(lang) {
   const folder = getClaudefmFolder();
   const filePath = getListFilePath();
   if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(filePath, "# 历史播放歌单\n\n", "utf8");
+  const header = ht("host.list.header", lang) + "\n\n";
+  fs.writeFileSync(filePath, header, "utf8");
   return { ok: true, path: filePath, created: true };
 }
 
@@ -1525,11 +1509,11 @@ function normalizeTrackKey(name, artist) {
   const n = String(name || "")
     .trim()
     .toLowerCase()
-    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”"‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
   const a = String(artist || "")
     .trim()
     .toLowerCase()
-    .replace(/[\s\-_–—·•、，,。.!！?？'"“”‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
+    .replace(/[\s\-_–—·•、，,。.!！?？'"“”"‘’()（）【】[\]{}<>《》:：;；/\\|]+/g, "");
   return `${n}|${a}`;
 }
 
@@ -1541,7 +1525,7 @@ function parseTracksLoose(text, maxTracks = 8000) {
   const patterns = [
     /^\s*-\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
     /^\s*\d+[.、】【、)]\s*(.+?)\s*[-–—]\s*(.+?)\s*$/u,
-    /^\s*["“](.+?)["”]\s*[-–—]\s*["“](.+?)["”]\s*$/u,
+    /^\s*[“”"](.+?)[“”"]\s*[-–—]\s*[“”"](.+?)[“”"]\s*$/u,
     /^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/u,
     /^\s*([^,\t|]+?)\s*[,|\t]\s*([^,\t|]+?)\s*$/u
   ];
@@ -1698,7 +1682,8 @@ function prependListSection(input) {
 }
 
 function ensureMusicFile(input) {
-  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
+  const lang = input && input.lang ? String(input.lang) : "zh";
+  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "", lang);
   const folder = getClaudefmFolder();
   const filePath = getMusicFilePath();
   if (fs.existsSync(filePath)) return { ok: true, path: filePath, created: false };
@@ -1739,9 +1724,11 @@ function optimizeMemoryFile(input) {
   const djRaw = input && input.djName ? String(input.djName) : "Claudio";
   const dj = djRaw.replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
   const summary = input && input.profileSummary ? String(input.profileSummary).trim() : "";
-  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "");
+  const lang = input && input.lang ? String(input.lang) : "zh";
+  const isEn = lang === "en";
+  const templatePath = resolveTemplatePath(input && input.templatePath ? String(input.templatePath) : "", lang);
   if (!templatePath || !fs.existsSync(templatePath)) {
-    return Promise.resolve({ ok: false, error: `template not found: ${templatePath}` });
+    return Promise.resolve({ ok: false, error: ht("host.error.templateNotFound", lang, {0: templatePath}) });
   }
 
   const folder = getClaudefmFolder();
@@ -1763,30 +1750,33 @@ function optimizeMemoryFile(input) {
     existing = "";
   }
 
+  const empty = ht("host.empty", lang);
   const prompt = [
-    "你是一个音乐偏好画像整理器。请把“现有记忆”整理为严格遵循“模板”的 Markdown 文档。",
-    "要求：",
-    "1) 输出必须是 Markdown，且结构与标题层级必须与模板一致。",
-    "2) 充分利用现有记忆信息补全模板中能补全的字段；无法确定的保持为空或占位符。",
-    "3) 去重、归类、措辞简洁；不要输出与模板无关的说明文字。",
-    "4) 不要用任何代码块（不要输出 ```markdown 或 ```）。",
-    `4) DJ 名称为：${dj}`,
+    ht("host.memory.role", lang),
+    ht("host.memory.req1", lang),
+    ht("host.memory.req2", lang),
+    ht("host.memory.req3", lang),
+    ht("host.memory.req4", lang),
+    ht("host.memory.dj", lang, {0: dj}),
     "",
-    "【模板】",
+    ht("host.memory.section.template", lang),
     template,
     "",
-    "【现有记忆】",
-    (existing || "").trim() || "(空)",
+    ht("host.memory.section.existing", lang),
+    (existing || "").trim() || empty,
     "",
-    "【profileSummary】",
-    summary || "(空)",
+    ht("host.memory.section.profile", lang),
+    summary || empty,
     "",
-    "现在开始输出整理后的 Markdown："
+    ht("host.memory.start", lang),
   ].join("\n");
 
   const claudePath = findClaudeBinary();
   const args = ["--bare", "-p", prompt];
   const env = buildExecEnv();
+
+  const zhHeading = ht("host.heading.zh", lang);
+  const enHeading = ht("host.heading.en", lang);
 
   return new Promise((resolve) => {
     const child = spawn(claudePath, args, { stdio: ["ignore", "pipe", "pipe"], env });
@@ -1794,7 +1784,7 @@ function optimizeMemoryFile(input) {
     let err = "";
     child.on("error", (e) => {
       const message = e && e.message ? String(e.message) : String(e);
-      resolve({ ok: false, error: `Claude CLI not found or failed to start (${claudePath}): ${message}` });
+      resolve({ ok: false, error: ht("host.error.claudeNotFound", lang, {0: claudePath, 1: message}) });
     });
     child.stdout.on("data", (d) => {
       out += d.toString("utf8");
@@ -1807,12 +1797,14 @@ function optimizeMemoryFile(input) {
         resolve({ ok: false, error: err || `claude exited ${code}` });
         return;
       }
-      const md = sanitizeMarkdownOutput(out || "", "# 用户音乐记忆画像档案");
+      const mdZh = sanitizeMarkdownOutput(out || "", zhHeading);
+      const mdEn = sanitizeMarkdownOutput(out || "", enHeading);
+      const md = mdZh || mdEn;
       if (!md) {
         resolve({ ok: false, error: "empty output from claude" });
         return;
       }
-      if (!md.startsWith("# 用户音乐记忆画像档案")) {
+      if (!md.startsWith(zhHeading) && !md.startsWith(enHeading)) {
         resolve({ ok: false, error: "output does not follow template heading" });
         return;
       }
@@ -1830,6 +1822,7 @@ function optimizeMemoryFile(input) {
 readNativeMessageStream(async (msg) => {
   try {
     if (!msg || typeof msg !== "object") return;
+    const msgLang = msg.lang || "zh";
     if (msg.type === "cacheTrack") {
       const track = msg.track && typeof msg.track === "object" ? msg.track : {};
       const resolved = msg.resolved && typeof msg.resolved === "object" ? msg.resolved : {};
@@ -1922,7 +1915,7 @@ readNativeMessageStream(async (msg) => {
     if (msg.type === "tts") {
       const text = msg.text ? String(msg.text).trim() : "";
       if (!text) {
-        sendNativeMessage({ ok: false, error: "empty text" });
+        sendNativeMessage({ ok: false, error: ht("host.error.emptyTtsText", msgLang) });
         return;
       }
 
@@ -2007,7 +2000,7 @@ readNativeMessageStream(async (msg) => {
     if (msg.type === "checkCloudAiStatus") {
       const config = loadTtsConfig();
       if (!config || !config.apiKey) {
-        sendNativeMessage({ ok: false, error: "未配置 API Key，请在 tts-config.json 中设置 api_key" });
+        sendNativeMessage({ ok: false, error: ht("host.error.noApiKey", msgLang) });
         return;
       }
       sendNativeMessage({
@@ -2025,7 +2018,7 @@ readNativeMessageStream(async (msg) => {
       const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudio";
       const provider = msg.provider || "paojiao";
 
-      const scene = await buildWelcomeScene(msg.latitude, msg.longitude, profileSummary);
+      const scene = await buildWelcomeScene(msg.latitude, msg.longitude, profileSummary, msgLang);
       const prompt = buildPrompt({
         provider,
         profileSummary,
@@ -2033,19 +2026,20 @@ readNativeMessageStream(async (msg) => {
         djName: dj,
         forceProfileRefresh: false,
         forceRecommend: true,
-        text: "请用电台 DJ 的口吻对我说一句开场欢迎语，并根据时间/地点/天气/历史记忆推荐 3-5 首适合现在的歌。"
+        lang: msgLang,
+        text: ht("host.welcome.text", msgLang)
       });
 
       const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
       let resp, toolContext;
       if (aiProvider === "cloud") {
-        resp = await runMiMoChat(prompt, schema);
+        resp = await runMiMoChat(prompt, schema, msgLang);
         toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
       } else {
         const detection = detectLocalAiTools();
         const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
         if (!resolved.tool) {
-          sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+          sendNativeMessage({ ok: false, error: ht("host.error.noLocalAiTool", msgLang), toolContext: { mode: resolved.mode } });
           return;
         }
         resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
@@ -2085,49 +2079,52 @@ readNativeMessageStream(async (msg) => {
           .filter(Boolean)
           .join("\n");
 
-      const recentTracksText = fmtTracks(recentTracks, 20) || "(无)";
+      const lang = msg.lang || "zh";
+      const isEn = lang === "en";
+      const empty = ht("host.empty", lang);
+      const recentTracksText = fmtTracks(recentTracks, 20) || empty;
 
       const prompt = [
-        `你是 Claudefm 的 DJ ${dj}。回复必须是中文。`,
-        "电台正在持续播放中，你需要为下一个段落衔接推荐。",
-        `当前音源来源偏好：${provider}。`,
-        "必须输出 JSON，字段遵循给定 schema。",
-        "say 输出简短衔接语（1-2句即可，不需要像开场那样长）。",
-        "推荐 3-5 首歌（play 长度 3-5），segue 必须是一段完整的电台 DJ 推荐语（100-200字），用自然的口吻衔接上段内容，风格延续但歌曲不要重复。像真实电台主播一样自然亲切。",
-        "强约束：dislikedTracks（踩过）里的歌曲，以及这些歌曲的同艺人/强相似风格，后续不要再推荐。",
-        "偏好：likedTracks（赞过）里的歌曲及其同风格/同艺人可提高推荐权重。",
-        "每首歌只输出 name/artist；album/query/provider 可选。",
-        "memory 用于写回画像偏好，尽量输出 1-3 条可执行的偏好更新。",
+        ht("host.nextBatch.role", lang, {0: dj}),
+        ht("host.nextBatch.task", lang),
+        ht("host.djProvider", lang, {0: provider}),
+        ht("host.djJsonSchema", lang),
+        ht("host.nextBatch.sayHint", lang),
+        ht("host.nextBatch.recommendHint", lang),
+        ht("host.djDislikedConstraint", lang),
+        ht("host.djLikedPreference", lang),
+        ht("host.djOutputFormat", lang),
+        ht("host.djMemoryHint", lang),
         "",
-        "【likedTracks（赞）】",
-        fmtTracks(likedTracks) || "(空)",
+        isEn ? "[likedTracks (liked)]" : "【likedTracks（赞）】",
+        fmtTracks(likedTracks) || empty,
         "",
-        "【dislikedTracks（踩）】",
-        fmtTracks(dislikedTracks) || "(空)",
+        isEn ? "[dislikedTracks (disliked)]" : "【dislikedTracks（踩）】",
+        fmtTracks(dislikedTracks) || empty,
         "",
-        "【刚才已播放的歌曲】",
+        isEn ? "[Recently Played Tracks]" : "【刚才已播放的歌曲】",
         recentTracksText,
         "",
-        "【历史播放歌单（list.md 摘要）】",
-        listMd.trim() || "(空)",
+        isEn ? "[Playlist History (list.md summary)]" : "【历史播放歌单（list.md 摘要）】",
+        listMd.trim() || empty,
         "",
-        "【历史记忆文件（music.md 摘要）】",
-        (memMd || "").trim() || "(空)",
+        isEn ? "[Memory File (music.md summary)]" : "【历史记忆文件（music.md 摘要）】",
+        (memMd || "").trim() || empty,
         "",
-        "【画像摘要】",
-        profileSummary || "(空)",
+        isEn ? "[Profile Summary]" : "【画像摘要】",
+        profileSummary || empty,
       ].join("\n");
 
       const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
       let resp, toolContext;
       if (aiProvider === "cloud") {
-        resp = await runMiMoChat(prompt, schema);
+        resp = await runMiMoChat(prompt, schema, msgLang);
         toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
       } else {
         const detection = detectLocalAiTools();
         const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
         if (!resolved.tool) {
-          sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+          sendNativeMessage({ ok: false, error: ht("host.error.noLocalAiTool", msgLang), toolContext: { mode: resolved.mode } });
           return;
         }
         resp = await runWithLocalAiTool(resolved.tool, prompt, schema);
@@ -2142,7 +2139,7 @@ readNativeMessageStream(async (msg) => {
       return;
     }
     if (msg.type !== "chat") {
-      sendNativeMessage({ ok: false, error: "unknown message type" });
+      sendNativeMessage({ ok: false, error: ht("host.error.unknownType", msgLang) });
       return;
     }
 
@@ -2152,13 +2149,13 @@ readNativeMessageStream(async (msg) => {
     const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
     let resp, toolContext;
     if (aiProvider === "cloud") {
-      resp = await runMiMoChat(prompt, schema);
+      resp = await runMiMoChat(prompt, schema, msgLang);
       toolContext = { toolLabel: "MiMo 云端", mode: "cloud" };
     } else {
       const detection = detectLocalAiTools();
       const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
       if (!resolved.tool) {
-        sendNativeMessage({ ok: false, error: "未发现可直接调用的本地 AI 工具", toolContext: { mode: resolved.mode } });
+        sendNativeMessage({ ok: false, error: ht("host.error.noLocalAiTool", msgLang), toolContext: { mode: resolved.mode } });
         return;
       }
       resp = await runWithLocalAiTool(resolved.tool, prompt, schema);

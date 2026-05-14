@@ -1,3 +1,5 @@
+const { __t, __lang } = window;
+
 const port = chrome.runtime.connect({ name: "sidepanel" });
 let portDisconnected = false;
 try {
@@ -101,6 +103,8 @@ let preloadStatus = "idle";
 let playerPlaying = false;
 let playerCurrentTime = 0;
 let playerDuration = 0;
+let lastProgressAt = 0;
+let progressTick = null;
 let currentTrack = null;
 
 let localAiToolMode = "auto";
@@ -179,7 +183,7 @@ async function sendPlayerCommand(type, payload = {}) {
     return response;
   } catch (error) {
     const message = error?.message ? String(error.message) : String(error);
-    setHint(`播放器通信失败：${message}`);
+    setHint(__t("播放器通信失败：{0}", {0: message}));
     return { ok: false, error: message };
   }
 }
@@ -200,9 +204,14 @@ function applyPlayerState(state) {
   preloadStatus = state.preloadStatus ? String(state.preloadStatus) : "idle";
 
   const titleTrack = currentTrack || (queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null);
-  elTrackTitle.textContent = titleTrack ? buildTitle(titleTrack) : "未播放";
+  elTrackTitle.textContent = titleTrack ? buildTitle(titleTrack) : __t("未播放");
   updateTimeUI(playerCurrentTime, playerDuration);
   if (!seeking) updateProgressUI(playerCurrentTime, playerDuration);
+  if (playerPlaying && playerDuration > 0) {
+    startProgressTick();
+  } else {
+    stopProgressTick();
+  }
   setPlayingUI(playerPlaying);
   if (elInterruptHint) elInterruptHint.hidden = !interrupted;
   renderQueue();
@@ -222,9 +231,9 @@ async function ensureMicPermission() {
   } catch (e) {
     const name = e?.name ? String(e.name) : "";
     if (name === "NotAllowedError" || name === "SecurityError") {
-      setHint("麦克风权限被拒绝，请在系统与浏览器中允许 Chrome 使用麦克风后重试");
+      setHint(__t("麦克风权限被拒绝，请在系统与浏览器中允许 Chrome 使用麦克风后重试"));
     } else {
-      setHint("无法获取麦克风，请检查系统/浏览器麦克风权限");
+      setHint(__t("无法获取麦克风，请检查系统/浏览器麦克风权限"));
     }
     return false;
   }
@@ -255,6 +264,30 @@ function updateProgressUI(currentSec, durationSec) {
   elProgress.value = String(Math.round(ratio * 1000));
 }
 
+function startProgressTick() {
+  stopProgressTick();
+  if (!playerPlaying || playerDuration <= 0) return;
+  lastProgressAt = Date.now();
+  progressTick = setInterval(() => {
+    const now = Date.now();
+    playerCurrentTime += (now - lastProgressAt) / 1000;
+    lastProgressAt = now;
+    if (playerCurrentTime >= playerDuration) {
+      playerCurrentTime = playerDuration;
+      stopProgressTick();
+    }
+    updateTimeUI(playerCurrentTime, playerDuration);
+    if (!seeking) updateProgressUI(playerCurrentTime, playerDuration);
+  }, 200);
+}
+
+function stopProgressTick() {
+  if (progressTick != null) {
+    clearInterval(progressTick);
+    progressTick = null;
+  }
+}
+
 function setButtonIcon(button, name) {
   if (!button) return;
   const icons = button.querySelectorAll("[data-icon]");
@@ -271,13 +304,13 @@ function setButtonIcon(button, name) {
 
 function setPlayingUI(playing) {
   setButtonIcon(elBtnPlay, playing ? "pause" : "play");
-  elBtnPlay.setAttribute("aria-label", playing ? "暂停" : "播放");
+  elBtnPlay.setAttribute("aria-label", playing ? __t("暂停") : __t("播放"));
 }
 
 function buildTitle(track) {
   const name = track?.name ? String(track.name) : "";
   const artist = track?.artist ? String(track.artist) : "";
-  if (!name && !artist) return "未播放";
+  if (!name && !artist) return __t("未播放");
   if (!name) return artist;
   if (!artist) return name;
   return `${name} - ${artist}`;
@@ -289,10 +322,10 @@ function isSpeechItem(track) {
 
 function buildInterludeItem(text, tracks) {
   const t = Array.isArray(tracks) ? tracks : [];
-  const count = t.length ? `（${t.length} 首）` : "";
+  const count = t.length ? `（${t.length} ${__lang === "en" ? "songs" : "首"}）` : "";
   return {
     kind: "speech",
-    name: `插播：歌词情绪解读${count}`,
+    name: `${__t("插播：歌词情绪解读")}${count}`,
     artist: "",
     text: String(text || "").trim(),
   };
@@ -301,7 +334,7 @@ function buildInterludeItem(text, tracks) {
 function buildSegueItem(text, ttsAudioUrl) {
   const item = {
     kind: "speech",
-    name: "DJ 推荐语",
+    name: __t("DJ 推荐语"),
     artist: "",
     text: String(text || "").trim(),
   };
@@ -379,17 +412,17 @@ function clearPendingAssistant() {
 function startPendingAssistant() {
   clearPendingAssistant();
   const token = ++pendingAssistantToken;
-  pendingAssistantEl = appendMessageDom("assistant", "正在思考…");
+  pendingAssistantEl = appendMessageDom("assistant", __t("正在思考…"));
   pendingAssistantEl.classList.add("pending");
   pendingAssistantTimerA = setTimeout(() => {
     if (token !== pendingAssistantToken) return;
     if (!pendingAssistantEl || !pendingAssistantEl.isConnected) return;
-    pendingAssistantEl.textContent = "还在生成回复…";
+    pendingAssistantEl.textContent = __t("还在生成回复…");
   }, 12000);
   pendingAssistantTimerB = setTimeout(() => {
     if (token !== pendingAssistantToken) return;
     if (!pendingAssistantEl || !pendingAssistantEl.isConnected) return;
-    pendingAssistantEl.textContent = "回复有点慢，可能在排队/Host 忙，请稍等…";
+    pendingAssistantEl.textContent = __t("回复有点慢，可能在排队/Host 忙，请稍等…");
   }, 25000);
 }
 
@@ -400,7 +433,7 @@ function showRecommendConfirm(question) {
 
   const title = document.createElement("div");
   title.className = "recommendTitle";
-  title.textContent = question ? String(question) : "要不要我给你推荐一份歌单并直接开始播放？";
+  title.textContent = question ? String(question) : __t("要不要我给你推荐一份歌单并直接开始播放？");
 
   const actions = document.createElement("div");
   actions.className = "recommendActions";
@@ -408,7 +441,7 @@ function showRecommendConfirm(question) {
   const yes = document.createElement("button");
   yes.className = "recommendBtn primary";
   yes.type = "button";
-  yes.textContent = "推荐歌单";
+  yes.textContent = __t("推荐歌单");
   yes.addEventListener("click", () => {
     const seed = lastChatText ? String(lastChatText) : "";
     if (!seed) return;
@@ -423,10 +456,10 @@ function showRecommendConfirm(question) {
   const no = document.createElement("button");
   no.className = "recommendBtn";
   no.type = "button";
-  no.textContent = "先不用";
+  no.textContent = __t("先不用");
   no.addEventListener("click", () => {
     clearRecommendCard();
-    appendMessage("assistant", "好，那我先陪你聊。你想从哪开始？");
+    appendMessage("assistant", __t("好，那我先陪你聊。你想从哪开始？"));
   });
 
   actions.appendChild(yes);
@@ -456,14 +489,14 @@ function showRecommendPush(tracks, defaultSegue) {
         provider: t?.provider || "pending",
       }))
     );
-    setHint(`已推送 ${list.length} 首新歌单，正在播放`);
+    setHint(__t("已推送 {0} 首新歌单，正在播放", {0: list.length}));
     try {
       await sendPlayerCommand("player.replaceQueueAndPlay", { queue: next, startIndex: 0 });
     } catch {}
   };
 
   if (autoRecommendPlay) {
-    setHint(`已推荐 ${list.length} 首歌曲，正在开始播放`);
+    setHint(__t("已推荐 {0} 首歌曲，正在开始播放", {0: list.length}));
     void pushQueue(defaultSegue);
     return;
   }
@@ -473,7 +506,7 @@ function showRecommendPush(tracks, defaultSegue) {
 
   const title = document.createElement("div");
   title.className = "recommendTitle";
-  title.textContent = "新歌单推荐";
+  title.textContent = __t("新歌单推荐");
 
   const segueBody = document.createElement("div");
   segueBody.className = "recommendTextarea";
@@ -485,7 +518,7 @@ function showRecommendPush(tracks, defaultSegue) {
   const push = document.createElement("button");
   push.className = "recommendBtn primary";
   push.type = "button";
-  push.textContent = "推送并播放";
+  push.textContent = __t("推送并播放");
   push.addEventListener("click", async () => {
     const segueText = String(segueBody.textContent || "").trim();
     clearRecommendCard();
@@ -495,7 +528,7 @@ function showRecommendPush(tracks, defaultSegue) {
   const cancel = document.createElement("button");
   cancel.className = "recommendBtn";
   cancel.type = "button";
-  cancel.textContent = "取消";
+  cancel.textContent = __t("取消");
   cancel.addEventListener("click", () => clearRecommendCard());
 
   actions.appendChild(push);
@@ -613,13 +646,13 @@ function buildPlayListMessage(tracks) {
     const name = t?.name ? String(t.name).trim() : "";
     const artist = t?.artist ? String(t.artist).trim() : "";
     const title = [name, artist].filter(Boolean).join(" - ").trim();
-    return `${i + 1}. ${title || "未知歌曲"}`;
+    return `${i + 1}. ${title || __t("未知歌曲")}`;
   });
-  return `歌单推荐：\n${lines.join("\n")}`;
+  return `${__t("歌单推荐：")}\n${lines.join("\n")}`;
 }
 
 function renderQueue() {
-  if (elQueueCount) elQueueCount.textContent = `（${queue.length}）`;
+  if (elQueueCount) elQueueCount.textContent = `(${queue.length})`;
   elQueueList.innerHTML = "";
   queue.forEach((t, i) => {
     const row = document.createElement("div");
@@ -670,7 +703,7 @@ function renderQueue() {
 
     const name = document.createElement("div");
     name.className = "name";
-    name.textContent = t.name || "未知歌曲";
+    name.textContent = t.name || __t("未知歌曲");
     const artist = document.createElement("div");
     artist.className = "artist";
     artist.textContent = t.artist || "";
@@ -685,7 +718,7 @@ function renderQueue() {
       const likeBtn = document.createElement("button");
       likeBtn.className = `queueVoteBtn${vote === 1 ? " active" : ""}`;
       likeBtn.type = "button";
-      likeBtn.setAttribute("aria-label", "点赞");
+      likeBtn.setAttribute("aria-label", __t("点赞"));
       likeBtn.dataset.kind = "up";
       likeBtn.innerHTML = renderVoteIcon("up", vote === 1);
       likeBtn.addEventListener("click", async (e) => {
@@ -701,7 +734,7 @@ function renderQueue() {
       const dislikeBtn = document.createElement("button");
       dislikeBtn.className = `queueVoteBtn${vote === -1 ? " active" : ""}`;
       dislikeBtn.type = "button";
-      dislikeBtn.setAttribute("aria-label", "踩");
+      dislikeBtn.setAttribute("aria-label", __t("踩"));
       dislikeBtn.dataset.kind = "down";
       dislikeBtn.innerHTML = renderVoteIcon("down", vote === -1);
       dislikeBtn.addEventListener("click", async (e) => {
@@ -802,7 +835,7 @@ function openSoulPanel() {
   if (!elSoulPanel) return;
   elSoulPanel.hidden = false;
   refreshOverlayTransientUiState();
-  setSoulStatus("正在读取…");
+  setSoulStatus(__t("正在读取…"));
 }
 
 function closeSoulPanel() {
@@ -827,14 +860,14 @@ function closeSettingsPanel() {
 
 async function refreshAiToolSettingsUI(forceRefresh = false) {
   if (!elAiToolSelect || !elAiToolStatus) return;
-  elAiToolStatus.textContent = "正在检测本地 AI 工具…";
+  elAiToolStatus.textContent = __t("正在检测本地 AI 工具…");
   elAiToolHint.textContent = "";
   try {
     const resp = await chrome.runtime.sendMessage({ type: "detectLocalAiTools", forceRefresh });
     if (!resp || resp.ok === false) {
       elAiToolStatus.textContent = resp?.error?.includes("unknown message type")
-        ? "Host 版本过低，不支持工具检测"
-        : `检测失败：${resp?.error || "无响应"}`;
+        ? __t("Host 版本过低，不支持工具检测")
+        : __t("检测失败：{0}", {0: resp?.error || __t("Host 无响应")});
       elAiToolSelect.innerHTML = "";
       return;
     }
@@ -843,7 +876,7 @@ async function refreshAiToolSettingsUI(forceRefresh = false) {
     for (const tool of tools) {
       const opt = document.createElement("option");
       opt.value = tool.id;
-      const statusSuffix = tool.callable ? "可直接调用" : tool.installed ? "仅检测展示" : "未安装";
+      const statusSuffix = tool.callable ? (__lang === "en" ? "Callable" : "可直接调用") : tool.installed ? (__lang === "en" ? "Detection only" : "仅检测展示") : (__lang === "en" ? "Not installed" : "未安装");
       opt.textContent = `${tool.label} · ${statusSuffix}`;
       elAiToolSelect.appendChild(opt);
     }
@@ -855,24 +888,24 @@ async function refreshAiToolSettingsUI(forceRefresh = false) {
     elAiToolSelect.disabled = localAiToolMode === "auto";
     const resolvedTool = tools.find((t) => t.id === (selectedId || resolvedId));
     elAiToolStatus.textContent = resolvedTool
-      ? `当前使用：${resolvedTool.label}（${resolvedTool.statusText || "已检测"}）`
+      ? __t("当前使用：{0}（{1}）", {0: resolvedTool.label, 1: resolvedTool.statusText || (__lang === "en" ? "Detected" : "已检测")})
       : tools.length
-        ? "未发现可用工具"
-        : "未检测到本地 AI 工具";
+        ? __t("未发现可用工具")
+        : __t("未检测到本地 AI 工具");
     if (localAiToolMode === "manual" && localAiToolId) {
       const selectedTool = tools.find((t) => t.id === localAiToolId);
       if (selectedTool && !selectedTool.callable) {
-        elAiToolHint.textContent = `注意：${selectedTool.label} 暂不支持直接调用。聊天功能将无法使用。`;
+        elAiToolHint.textContent = __t("注意：{0} 暂不支持直接调用。聊天功能将无法使用。", {0: selectedTool.label});
       } else {
         elAiToolHint.textContent = "";
       }
     } else if (!recommendedId && tools.length) {
-      elAiToolHint.textContent = "未发现可直接调用的 CLI 工具。请安装 Claude Code 或其他支持的工具。";
+      elAiToolHint.textContent = __t("未发现可直接调用的本地 AI 工具。请安装 Claude Code 或其他支持的工具。");
     } else {
       elAiToolHint.textContent = "";
     }
   } catch (e) {
-    elAiToolStatus.textContent = `检测请求失败：${e?.message || e}`;
+    elAiToolStatus.textContent = __t("检测请求失败：{0}", {0: e?.message || e});
   }
 }
 
@@ -890,38 +923,38 @@ function applyProviderVisibility() {
 
 async function refreshCloudAiStatus() {
   if (!elCloudAiStatus) return;
-  elCloudAiStatus.textContent = "检测中…";
+  elCloudAiStatus.textContent = __t("检测中…");
   try {
     const resp = await chrome.runtime.sendMessage({ type: "checkCloudAiStatus" });
     if (resp?.ok) {
       elCloudAiStatus.textContent = `${resp.model} · ${resp.endpoint}`;
-      if (elCloudAiHint) elCloudAiHint.textContent = "API Key 已配置，云端 AI 可用。";
+      if (elCloudAiHint) elCloudAiHint.textContent = __t("API Key 已配置，云端 AI 可用。");
     } else {
-      elCloudAiStatus.textContent = "不可用";
-      if (elCloudAiHint) elCloudAiHint.textContent = resp?.error || "请在 tts-config.json 中配置 api_key。";
+      elCloudAiStatus.textContent = __t("不可用");
+      if (elCloudAiHint) elCloudAiHint.textContent = resp?.error || __t("云端 AI 不可用：未配置 API Key（请在 tts-config.json 中设置 api_key）");
     }
   } catch (e) {
-    elCloudAiStatus.textContent = "检测失败";
-    if (elCloudAiHint) elCloudAiHint.textContent = e?.message || "Host 无响应";
+    elCloudAiStatus.textContent = __t("检测失败");
+    if (elCloudAiHint) elCloudAiHint.textContent = e?.message || __t("Host 无响应");
   }
 }
 
 async function refreshSoulFromFile() {
-  setSoulStatus("正在读取 music.md …");
+  setSoulStatus(__t("正在读取 music.md …"));
   try {
     const resp = await chrome.runtime.sendMessage({ type: "readMemoryFile" });
     if (!resp?.ok) {
-      setSoulStatus(`读取失败：${resp?.error || "unknown"}`);
-      if (elSoulContent) elSoulContent.textContent = "(空)";
+      setSoulStatus(__t("读取失败：{0}", {0: resp?.error || "unknown"}));
+      if (elSoulContent) elSoulContent.textContent = __t("(空)");
       return;
     }
     const content = resp?.content ? String(resp.content) : "";
-    if (elSoulContent) elSoulContent.textContent = content && content.trim() ? content.trim() : "(空)";
-    setSoulStatus(`已加载：${resp.path || "music.md"}`);
+    if (elSoulContent) elSoulContent.textContent = content && content.trim() ? content.trim() : __t("(空)");
+    setSoulStatus(__t("已加载：{0}", {0: resp.path || "music.md"}));
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setSoulStatus(`读取失败：${message}`);
-    if (elSoulContent) elSoulContent.textContent = "(空)";
+    setSoulStatus(__t("读取失败：{0}", {0: message}));
+    if (elSoulContent) elSoulContent.textContent = __t("(空)");
   }
 }
 
@@ -1128,7 +1161,7 @@ function setHistoryView(nextView) {
   }
   if (elHistoryList) elHistoryList.hidden = v !== "list";
   if (elHistoryDetail) elHistoryDetail.hidden = v !== "detail";
-  if (elHistoryTitle) elHistoryTitle.textContent = v === "detail" ? "详情" : "历史";
+  if (elHistoryTitle) elHistoryTitle.textContent = v === "detail" ? __t("详情") : __t("历史");
 }
 
 async function hydrateHistoryCoverFromCache(track, cover, coverBox, renderToken) {
@@ -1167,7 +1200,7 @@ function renderHistoryList() {
     empty.style.padding = "10px 2px";
     empty.style.fontSize = "12px";
     empty.style.color = "var(--muted)";
-    empty.textContent = "最近 7 天暂无历史记录";
+    empty.textContent = __t("最近 7 天暂无历史记录");
     elHistoryList.appendChild(empty);
     return;
   }
@@ -1186,7 +1219,7 @@ function renderHistoryList() {
     icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v3"/><path d="M16 2v3"/><path d="M3.5 9h17"/><path d="M5 6h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/></svg>`;
     const text = document.createElement("span");
     text.className = "historyDividerText";
-    text.textContent = stamp || "未命名";
+    text.textContent = stamp || (__lang === "en" ? "Untitled" : "未命名");
     row.appendChild(icon);
     row.appendChild(text);
     divider.appendChild(row);
@@ -1227,7 +1260,7 @@ function renderHistoryList() {
 
       const name = document.createElement("div");
       name.className = "name";
-      name.textContent = t?.name ? String(t.name) : "未知歌曲";
+      name.textContent = t?.name ? String(t.name) : __t("未知歌曲");
       const artist = document.createElement("div");
       artist.className = "artist";
       artist.textContent = t?.artist ? String(t.artist) : "";
@@ -1242,7 +1275,7 @@ function renderHistoryList() {
         const likeBtn = document.createElement("button");
         likeBtn.className = `queueVoteBtn${vote === 1 ? " active" : ""}`;
         likeBtn.type = "button";
-        likeBtn.setAttribute("aria-label", "点赞");
+        likeBtn.setAttribute("aria-label", __t("点赞"));
         likeBtn.dataset.kind = "up";
         likeBtn.innerHTML = renderVoteIcon("up", vote === 1);
         likeBtn.addEventListener("click", async (e) => {
@@ -1259,7 +1292,7 @@ function renderHistoryList() {
         const dislikeBtn = document.createElement("button");
         dislikeBtn.className = `queueVoteBtn${vote === -1 ? " active" : ""}`;
         dislikeBtn.type = "button";
-        dislikeBtn.setAttribute("aria-label", "踩");
+        dislikeBtn.setAttribute("aria-label", __t("踩"));
         dislikeBtn.dataset.kind = "down";
         dislikeBtn.innerHTML = renderVoteIcon("down", vote === -1);
         dislikeBtn.addEventListener("click", async (e) => {
@@ -1339,7 +1372,7 @@ function openHistoryPanel() {
   elHistoryPanel.hidden = false;
   refreshOverlayTransientUiState();
   setHistoryView("list");
-  setHistoryStatus("正在读取…");
+  setHistoryStatus(__t("正在读取…"));
 }
 
 function closeHistoryPanel() {
@@ -1349,11 +1382,11 @@ function closeHistoryPanel() {
 }
 
 async function refreshHistoryFromFile() {
-  setHistoryStatus("正在读取 list.md …");
+  setHistoryStatus(__t("正在读取 list.md …"));
   try {
     const resp = await chrome.runtime.sendMessage({ type: "readListFile" });
     if (!resp?.ok) {
-      setHistoryStatus(`读取失败：${resp?.error || "unknown"}`);
+      setHistoryStatus(__t("读取失败：{0}", {0: resp?.error || "unknown"}));
       historySections = [];
       historyPath = "";
       renderHistoryList();
@@ -1372,10 +1405,10 @@ async function refreshHistoryFromFile() {
     });
     renderHistoryList();
     setHistoryView("list");
-    setHistoryStatus(`已加载：${historyPath || "list.md"}（最近 7 天）`);
+    setHistoryStatus(__t("已加载：{0}", {0: historyPath || "list.md"}));
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setHistoryStatus(`读取失败：${message}`);
+    setHistoryStatus(__t("读取失败：{0}", {0: message}));
     historySections = [];
     historyPath = "";
     renderHistoryList();
@@ -1385,7 +1418,7 @@ async function refreshHistoryFromFile() {
 async function importHistoryFile(file) {
   const f = file;
   if (!f) return;
-  setHistoryStatus(`正在导入：${f.name} …`);
+  setHistoryStatus(__t("正在导入：{0} …", {0: f.name}));
   await new Promise((r) => setTimeout(r, 0));
 
   let text = "";
@@ -1393,14 +1426,14 @@ async function importHistoryFile(file) {
     text = await f.text();
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setHistoryStatus(`导入失败：${message}`);
+    setHistoryStatus(__t("导入失败：{0}", {0: message}));
     return;
   }
 
   const lower = String(f.name || "").toLowerCase();
   const lineCount = text ? text.split(/\r?\n/g).length : 0;
   if (lineCount >= 1200) {
-    setHistoryStatus(`正在解析：${f.name}（${lineCount} 行）…`);
+    setHistoryStatus(__t("正在解析：{0}（{1} 行）…", {0: f.name, 1: lineCount}));
     await new Promise((r) => setTimeout(r, 0));
   }
   const parsed = lower.endsWith(".csv") ? parseCsvTracks(text, 50000) : parseTracksLoose(text, 50000);
@@ -1417,27 +1450,27 @@ async function importHistoryFile(file) {
   }
 
   if (!tracks.length) {
-    setHistoryStatus("导入失败：文件中未识别到可用的歌曲清单");
+    setHistoryStatus(__t("导入失败：文件中未识别到可用的歌曲清单"));
     return;
   }
 
   try {
-    setHistoryStatus(`正在写入 list.md：共 ${tracks.length} 首…`);
+    setHistoryStatus(__t("正在写入 list.md：共 {0} 首…", {0: tracks.length}));
     await new Promise((r) => setTimeout(r, 0));
     const resp = await chrome.runtime.sendMessage({ type: "prependListSection", kind: "import", tracks });
     if (!resp?.ok) {
-      setHistoryStatus(`导入失败：${resp?.error || "unknown"}`);
+      setHistoryStatus(__t("导入失败：{0}", {0: resp?.error || "unknown"}));
       return;
     }
     if (resp?.skipped) {
-      setHistoryStatus("导入完成：未新增（可能全部与历史重复）");
+      setHistoryStatus(__t("导入完成：未新增（可能全部与历史重复）"));
     } else {
-      setHistoryStatus(`导入完成：已写入一个新分段（## ${resp?.stamp || "当前时间"}）`);
+      setHistoryStatus(__t("导入完成：已写入一个新分段（## {0}）", {0: resp?.stamp || "current time"}));
     }
     await refreshHistoryFromFile();
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setHistoryStatus(`导入失败：${message}`);
+    setHistoryStatus(__t("导入失败：{0}", {0: message}));
   }
 }
 
@@ -1447,14 +1480,14 @@ function updateSendState() {
     elSend.disabled = false;
     elSend.classList.add("enabled");
     setButtonIcon(elSend, "stop");
-    elSend.setAttribute("aria-label", "结束语音");
+    elSend.setAttribute("aria-label", __t("结束语音"));
     return;
   }
   const enabled = text.length > 0;
   elSend.disabled = !enabled;
   elSend.classList.toggle("enabled", enabled);
   setButtonIcon(elSend, "send");
-  elSend.setAttribute("aria-label", "发送");
+  elSend.setAttribute("aria-label", __t("发送"));
 }
 
 const COMPOSER_INPUT_MAX_HEIGHT = 120;
@@ -1553,12 +1586,12 @@ async function handleAssistantResult(result) {
   if (typeof result === "string") {
     const text = result.trim();
     if (text) appendMessage("assistant", text);
-    else appendMessage("assistant", "未收到有效回复");
+    else appendMessage("assistant", __t("未收到有效回复"));
     return;
   }
 
   if (!result || typeof result !== "object") {
-    appendMessage("assistant", "未收到有效回复");
+    appendMessage("assistant", __t("未收到有效回复"));
     return;
   }
 
@@ -1578,7 +1611,7 @@ async function handleAssistantResult(result) {
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
     if (autoRecommendPlay) {
-      setHint(`已推荐 ${result.play.length} 首歌曲，正在开始播放`);
+      setHint(__t("已推荐 {0} 首歌曲，正在开始播放", {0: result.play.length}));
       segueSpokenInQueue = 0;
       const nextItems = [];
       const segueText = result.segue ? String(result.segue).trim() : "";
@@ -1628,11 +1661,11 @@ port.onMessage.addListener(async (msg) => {
           { enableHighAccuracy: false, timeout: 8000, maximumAge: 10 * 60 * 1000 }
         );
       });
-      if (!result.ok) setHint("定位失败，已使用时间与历史记忆推荐");
+      if (!result.ok) setHint(__t("定位失败，已使用时间与历史记忆推荐"));
       safePost({ type: "locationResult", ...result });
     } catch (e) {
       const message = e?.message ? String(e.message) : String(e);
-      setHint("定位失败，已使用时间与历史记忆推荐");
+      setHint(__t("定位失败，已使用时间与历史记忆推荐"));
       safePost({ type: "locationResult", ok: false, error: message });
     }
     return;
@@ -1652,9 +1685,9 @@ port.onMessage.addListener(async (msg) => {
     return;
   }
   if (msg.type === "player.error") {
-    const context = msg.context ? ` (${msg.context})` : "";
-    const message = msg.error ? String(msg.error) : "未知错误";
-    setHint(`播放异常${context}：${message}`);
+    const message = msg.error ? String(msg.error) : __t("未知错误");
+    if (msg.context) setHint(`${msg.context}: ${message}`);
+    else setHint(__t("播放异常：{0}", {0: message}));
     return;
   }
 });
@@ -1667,7 +1700,7 @@ elSend.addEventListener("click", async () => {
     return;
   }
   if (pendingAssistantEl && pendingAssistantEl.isConnected) {
-    setHint("上一条还在生成回复…");
+    setHint(__t("上一条还在生成回复…"));
     return;
   }
   const text = elInput.value.trim();
@@ -1684,7 +1717,7 @@ elSend.addEventListener("click", async () => {
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     clearPendingAssistant();
-    appendMessage("assistant", `发送失败：${message}`);
+    appendMessage("assistant", __t("发送失败：{0}", {0: message}));
   }
 });
 
@@ -1692,7 +1725,7 @@ if (elBtnClear) {
   elBtnClear.addEventListener("click", async () => {
     await startNewSession();
     updateSendState();
-    setHint("已开启新会话");
+    setHint(__t("已开启新会话"));
   });
 }
 
@@ -1728,9 +1761,9 @@ elAvatarFile.addEventListener("change", async () => {
     const avatarDataUrl = await cropAvatar(file);
     await patchPreferences({ avatarDataUrl });
     setAvatarUI(avatarDataUrl);
-    setHint("头像已更新");
+    setHint(__t("头像已更新"));
   } catch {
-    setHint("头像处理失败");
+    setHint(__t("头像处理失败"));
   }
 });
 
@@ -1777,13 +1810,13 @@ elProgress.addEventListener("change", () => {
 elBtnMic.addEventListener("click", async () => {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    setHint("当前浏览器不支持语音输入");
+    setHint(__t("当前浏览器不支持语音输入"));
     return;
   }
 
   if (!recognition) {
     recognition = new SpeechRecognition();
-    recognition.lang = "zh-CN";
+    recognition.lang = __lang === "en" ? "en-US" : "zh-CN";
     recognition.interimResults = true;
     recognition.continuous = false;
 
@@ -1807,11 +1840,11 @@ elBtnMic.addEventListener("click", async () => {
     recognition.addEventListener("error", (event) => {
       const err = event?.error ? String(event.error) : "unknown";
       if (err === "not-allowed" || err === "service-not-allowed") {
-        setHint("语音权限被拒绝");
+        setHint(__t("语音权限被拒绝"));
       } else if (err === "no-speech") {
-        setHint("未检测到语音");
+        setHint(__t("未检测到语音"));
       } else {
-        setHint(`语音识别失败：${err}`);
+        setHint(__t("语音识别失败：{0}", {0: err}));
       }
       updateSendState();
     });
@@ -1835,7 +1868,7 @@ elBtnMic.addEventListener("click", async () => {
     recognizing = true;
     elBtnMic.classList.add("recording");
     elBtnMic.setAttribute("aria-pressed", "true");
-    setHint("正在聆听…");
+    setHint(__t("正在聆听…"));
     updateSendState();
     recognition.start();
   } catch {
@@ -1843,7 +1876,7 @@ elBtnMic.addEventListener("click", async () => {
     elBtnMic.classList.remove("recording");
     elBtnMic.setAttribute("aria-pressed", "false");
     updateSendState();
-    setHint("语音输入启动失败");
+    setHint(__t("语音输入启动失败"));
   }
 });
 
@@ -1956,10 +1989,10 @@ if (elSettingsKeepSession) {
     } catch {}
     if (!enabled) {
       await clearSavedSession();
-      setHint("已关闭保留会话");
+      setHint(__t("已关闭保留会话"));
     } else {
       scheduleSessionSave();
-      setHint("已开启保留会话");
+      setHint(__t("已开启保留会话"));
     }
   });
 }
@@ -1971,7 +2004,7 @@ if (elSettingsAutoRecommend) {
     try {
       await patchPreferences({ autoRecommendPlay: enabled });
     } catch {}
-    setHint(enabled ? "已开启 DJ 推荐自动播放" : "已关闭 DJ 推荐自动播放，推荐时将显示确认按钮");
+    setHint(enabled ? __t("已开启 DJ 推荐自动播放") : __t("已关闭 DJ 推荐自动播放，推荐时将显示确认按钮"));
   });
 }
 
@@ -1980,7 +2013,7 @@ if (elAiToolModeAuto) {
     if (!elAiToolModeAuto.checked) return;
     localAiToolMode = "auto";
     try { await patchPreferences({ localAiToolMode: "auto" }); } catch {}
-    setHint("已切换为自动检测模式");
+    setHint(__t("已切换为自动检测模式"));
     await refreshAiToolSettingsUI();
   });
 }
@@ -1992,7 +2025,7 @@ if (elAiToolModeManual) {
     const selectedId = elAiToolSelect ? String(elAiToolSelect.value || "").trim() : "";
     localAiToolId = selectedId;
     try { await patchPreferences({ localAiToolMode: "manual", localAiToolId: selectedId }); } catch {}
-    setHint("已切换为手动选择模式");
+    setHint(__t("已切换为手动选择模式"));
     await refreshAiToolSettingsUI();
   });
 }
@@ -2003,16 +2036,16 @@ if (elAiToolSelect) {
     const selectedId = String(elAiToolSelect.value || "").trim();
     localAiToolId = selectedId;
     try { await patchPreferences({ localAiToolId: selectedId }); } catch {}
-    setHint("已保存工具选择");
+    setHint(__t("已保存工具选择"));
     await refreshAiToolSettingsUI();
   });
 }
 
 if (elAiToolRefresh) {
   elAiToolRefresh.addEventListener("click", async () => {
-    setHint("正在刷新工具检测…");
+    setHint(__t("正在刷新工具检测…"));
     await refreshAiToolSettingsUI(true);
-    setHint("工具检测已刷新");
+    setHint(__t("工具检测已刷新"));
   });
 }
 
@@ -2021,7 +2054,7 @@ if (elAiProviderLocal) {
     if (!elAiProviderLocal.checked) return;
     aiProvider = "local";
     try { await patchPreferences({ aiProvider: "local" }); } catch {}
-    setHint("已切换为本地 AI 引擎");
+    setHint(__t("已切换为本地 AI 引擎"));
     applyProviderVisibility();
   });
 }
@@ -2030,7 +2063,7 @@ if (elAiProviderCloud) {
     if (!elAiProviderCloud.checked) return;
     aiProvider = "cloud";
     try { await patchPreferences({ aiProvider: "cloud" }); } catch {}
-    setHint("已切换为云端 AI 引擎");
+    setHint(__t("已切换为云端 AI 引擎"));
     applyProviderVisibility();
   });
 }
@@ -2040,18 +2073,18 @@ async function saveDjNameFromSettings() {
   const raw = String(elSettingsDjNameInput.value || "").trim();
   const next = Array.from(raw).slice(0, 8).join("");
   if (!next) {
-    setHint("DJ 名称不能为空");
+    setHint(__t("DJ 名称不能为空"));
     refreshSettingsDjNameUI();
     return;
   }
   try {
     await patchPreferences({ djName: next });
     setDjNameUI(next);
-    setHint("已保存 DJ 名称");
+    setHint(__t("已保存 DJ 名称"));
     refreshSettingsDjNameUI();
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
-    setHint(`保存失败：${message}`);
+    setHint(__t("保存失败：{0}", {0: message}));
   }
 }
 
@@ -2096,7 +2129,7 @@ window.addEventListener("keydown", (e) => {
 
 autosizeComposerInput();
 updateSendState();
-safePost({ type: "ready" });
+safePost({ type: "ready", lang: __lang });
 
 (async () => {
   const prefs = await getPreferences();
