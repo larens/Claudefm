@@ -1043,52 +1043,72 @@ function getCachedTts(text) {
   }
 }
 
-let ttsServerPort = 0;
-let ttsServerStarting = null;
+let mediaServerPort = 0;
+let mediaServerStarting = null;
 
-function ensureTtsServer() {
-  if (ttsServerPort) return Promise.resolve(ttsServerPort);
-  if (ttsServerStarting) return ttsServerStarting;
-  ttsServerStarting = new Promise((resolve) => {
+function ensureMediaServer() {
+  if (mediaServerPort) return Promise.resolve(mediaServerPort);
+  if (mediaServerStarting) return mediaServerStarting;
+  mediaServerStarting = new Promise((resolve) => {
     try {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url, `http://127.0.0.1`);
-        const hash = url.pathname.replace(/^\/tts\//, "").replace(/[^a-f0-9]/gi, "");
-        if (!hash) { res.writeHead(404); res.end(); return; }
-        const folders = ensureCacheFolders();
-        const filePath = path.join(folders.tts, `${hash}.mp3`);
-        if (!fs.existsSync(filePath)) { res.writeHead(404); res.end(); return; }
-        try {
-          const buf = fs.readFileSync(filePath);
-          const isWav = buf.length > 4 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
-          res.writeHead(200, {
-            "Content-Type": isWav ? "audio/wav" : "audio/mpeg",
-            "Content-Length": buf.length,
-            "Access-Control-Allow-Origin": "*",
-          });
-          res.end(buf);
-        } catch {
-          res.writeHead(500); res.end();
+        const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS" };
+        if (req.method === "OPTIONS") { res.writeHead(204, corsHeaders); res.end(); return; }
+
+        if (url.pathname.startsWith("/tts/")) {
+          const hash = url.pathname.replace(/^\/tts\//, "").replace(/[^a-f0-9]/gi, "");
+          if (!hash) { res.writeHead(404); res.end(); return; }
+          const folders = ensureCacheFolders();
+          const filePath = path.join(folders.tts, `${hash}.mp3`);
+          if (!fs.existsSync(filePath)) { res.writeHead(404); res.end(); return; }
+          try {
+            const buf = fs.readFileSync(filePath);
+            const isWav = buf.length > 4 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+            res.writeHead(200, { ...corsHeaders, "Content-Type": isWav ? "audio/wav" : "audio/mpeg", "Content-Length": buf.length });
+            res.end(buf);
+          } catch { res.writeHead(500); res.end(); }
+          return;
         }
+
+        if (url.pathname.startsWith("/cover/")) {
+          const id = url.pathname.replace(/^\/cover\//, "").replace(/[^a-f0-9]/gi, "");
+          if (!id) { res.writeHead(404); res.end(); return; }
+          const folders = ensureCacheFolders();
+          const files = fs.readdirSync(folders.covers).filter((f) => f.startsWith(id));
+          const coverFile = files[0];
+          if (!coverFile) { res.writeHead(404); res.end(); return; }
+          const filePath = path.join(folders.covers, coverFile);
+          try {
+            const buf = fs.readFileSync(filePath);
+            const ext = coverFile.split(".").pop().toLowerCase();
+            const ct = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+            res.writeHead(200, { ...corsHeaders, "Content-Type": ct, "Content-Length": buf.length, "Cache-Control": "public, max-age=86400" });
+            res.end(buf);
+          } catch { res.writeHead(500); res.end(); }
+          return;
+        }
+
+        res.writeHead(404); res.end();
       });
       server.listen(0, "127.0.0.1", () => {
-        ttsServerPort = server.address().port;
-        console.error(`[tts] audio server listening on 127.0.0.1:${ttsServerPort}`);
-        resolve(ttsServerPort);
+        mediaServerPort = server.address().port;
+        console.error(`[media] server listening on 127.0.0.1:${mediaServerPort}`);
+        resolve(mediaServerPort);
       });
     } catch (e) {
-      console.error(`[tts] failed to start audio server: ${e.message}`);
-      ttsServerStarting = null;
+      console.error(`[media] failed to start server: ${e.message}`);
+      mediaServerStarting = null;
       resolve(0);
     }
   });
-  return ttsServerStarting;
+  return mediaServerStarting;
 }
 
-async function getTtsServerUrl(hash) {
-  const port = await ensureTtsServer();
+async function getMediaServerUrl(path) {
+  const port = await ensureMediaServer();
   if (!port) return "";
-  return `http://127.0.0.1:${port}/tts/${hash}`;
+  return `http://127.0.0.1:${port}${path}`;
 }
 
 function normalizeTrackKey(name, artist) {
@@ -1234,6 +1254,89 @@ function getCachedTrackEntry(track) {
       cacheHit: true,
     },
   };
+}
+
+function invalidateCacheEntry(track) {
+  const name = track && track.name ? String(track.name).trim() : "";
+  const artist = track && track.artist ? String(track.artist).trim() : "";
+  if (!name || !artist) return { ok: false, error: "missing name/artist" };
+  const key = normalizeTrackKey(name, artist);
+  const folders = ensureCacheFolders();
+  const indexPath = path.join(folders.base, "index.json");
+  const index = safeJsonLoad(indexPath);
+  if (!index || typeof index !== "object") return { ok: true, removed: false };
+  const ref = index[key];
+  if (!ref) return { ok: true, removed: false };
+  try {
+    const metaPath = ref.metaPath || path.join(folders.tracks, `${ref.id}.json`);
+    if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+  } catch {}
+  delete index[key];
+  safeJsonWrite(indexPath, index);
+  return { ok: true, removed: true };
+}
+
+async function getCachedCoverUrls(tracks) {
+  const folders = ensureCacheFolders();
+  const result = {};
+  const port = mediaServerPort || (await ensureMediaServer());
+  if (!port) return { ok: false, error: "media server not running" };
+
+  const indexPath = path.join(folders.base, "index.json");
+  const index = safeJsonLoad(indexPath);
+  const coverFiles = new Set(fs.readdirSync(folders.covers));
+
+  for (const t of tracks) {
+    const name = t?.name ? String(t.name).trim() : "";
+    const artist = t?.artist ? String(t.artist).trim() : "";
+    if (!name || !artist) continue;
+    const key = normalizeTrackKey(name, artist);
+    const id = sha1Hex(key);
+
+    if (index && typeof index === "object" && index[key]) {
+      const ref = index[key];
+      const meta = ref.metaPath ? safeJsonLoad(ref.metaPath) : null;
+      if (meta?.coverPath && fs.existsSync(String(meta.coverPath))) {
+        result[key] = `http://127.0.0.1:${port}/cover/${id}`;
+        continue;
+      }
+    }
+
+    const match = [...coverFiles].find((f) => f.startsWith(id));
+    if (match) {
+      result[key] = `http://127.0.0.1:${port}/cover/${id}`;
+    }
+  }
+  return { ok: true, covers: result };
+}
+
+async function cleanupExpiredCache() {
+  const folders = ensureCacheFolders();
+  const indexPath = path.join(folders.base, "index.json");
+  const index = safeJsonLoad(indexPath);
+  if (!index || typeof index !== "object") return { ok: true, cleaned: 0 };
+
+  let cleaned = 0;
+  const keys = Object.keys(index);
+  for (const key of keys) {
+    const ref = index[key];
+    if (!ref || typeof ref !== "object") continue;
+    const metaPath = ref.metaPath || path.join(folders.tracks, `${ref.id}.json`);
+    const meta = safeJsonLoad(metaPath);
+    if (!meta) {
+      delete index[key];
+      cleaned++;
+      continue;
+    }
+    const streamUrl = meta.streamUrl || "";
+    if (!streamUrl) {
+      try { if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath); } catch {}
+      delete index[key];
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) safeJsonWrite(indexPath, index);
+  return { ok: true, cleaned };
 }
 
 async function fetchJson(url, options) {
@@ -1836,6 +1939,23 @@ readNativeMessageStream(async (msg) => {
       sendNativeMessage(res);
       return;
     }
+    if (msg.type === "invalidateCache") {
+      const track = msg.track && typeof msg.track === "object" ? msg.track : {};
+      const res = invalidateCacheEntry(track);
+      sendNativeMessage(res);
+      return;
+    }
+    if (msg.type === "getCachedCoverUrls") {
+      const tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
+      const res = await getCachedCoverUrls(tracks);
+      sendNativeMessage(res);
+      return;
+    }
+    if (msg.type === "cleanupExpiredCache") {
+      const res = await cleanupExpiredCache();
+      sendNativeMessage(res);
+      return;
+    }
     if (msg.type === "exportMemoryMd") {
       sendNativeMessage(exportMemoryMd(msg));
       return;
@@ -1923,7 +2043,7 @@ readNativeMessageStream(async (msg) => {
       const cached = getCachedTts(text);
       if (cached.ok && cached.hit) {
         const hash = sha1Hex(text);
-        const serverUrl = await getTtsServerUrl(hash);
+        const serverUrl = await getMediaServerUrl(`/tts/${hash}`);
         console.error(`[tts] cache hit for text=${text.slice(0, 40)}, url=${serverUrl}`);
         sendNativeMessage({ ok: true, audioUrl: serverUrl, provider: "cache", path: cached.path || "" });
         return;

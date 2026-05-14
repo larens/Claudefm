@@ -1174,22 +1174,7 @@ async function hydrateHistoryCoverFromCache(track, cover, coverBox, renderToken)
     showCoverImage(cover, coverBox, existing);
     return;
   }
-
-  const name = track?.name ? String(track.name).trim() : "";
-  const artist = track?.artist ? String(track.artist).trim() : "";
-  if (!name || !artist) return;
-
-  try {
-    const resp = await chrome.runtime.sendMessage({ type: "getCachedTrack", track: { name, artist } });
-    if (renderToken !== historyCoverRenderToken) return;
-    const coverUrl = resp?.ok && resp?.hit && resp?.resolved?.cover ? String(resp.resolved.cover) : "";
-    if (!coverUrl) {
-      historyCoverByKey[key] = null;
-      return;
-    }
-    historyCoverByKey[key] = coverUrl;
-    showCoverImage(cover, coverBox, coverUrl);
-  } catch {}
+  if (existing === null) return;
 }
 
 function renderHistoryList() {
@@ -1231,6 +1216,8 @@ function renderHistoryList() {
       const row = document.createElement("div");
       row.className = "queueItem";
       row.style.cursor = "pointer";
+      const voteKey = getVoteKeyForTrack(t);
+      if (voteKey) row.setAttribute("data-cover-key", voteKey);
 
       const prefix = document.createElement("div");
       prefix.className = "queuePrefix";
@@ -1406,6 +1393,8 @@ async function refreshHistoryFromFile() {
     renderHistoryList();
     setHistoryView("list");
     setHistoryStatus(__t("已加载：{0}", {0: historyPath || "list.md"}));
+    void batchLoadHistoryCovers();
+    void chrome.runtime.sendMessage({ type: "cleanupExpiredCache" }).catch(() => {});
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     setHistoryStatus(__t("读取失败：{0}", {0: message}));
@@ -1413,6 +1402,39 @@ async function refreshHistoryFromFile() {
     historyPath = "";
     renderHistoryList();
   }
+}
+
+async function batchLoadHistoryCovers() {
+  const allTracks = [];
+  for (const section of historySections) {
+    const tracks = Array.isArray(section?.tracks) ? section.tracks : [];
+    for (const t of tracks) {
+      const name = t?.name ? String(t.name).trim() : "";
+      const artist = t?.artist ? String(t.artist).trim() : "";
+      if (name && artist) allTracks.push({ name, artist });
+    }
+  }
+  if (!allTracks.length) return;
+
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "getCachedCoverUrls", tracks: allTracks });
+    if (!resp?.ok || !resp?.covers) return;
+    const covers = resp.covers;
+    for (const [key, url] of Object.entries(covers)) {
+      if (url) historyCoverByKey[key] = url;
+    }
+    const renderToken = historyCoverRenderToken;
+    const items = elHistoryList?.querySelectorAll("[data-cover-key]") || [];
+    items.forEach((el) => {
+      const key = el.getAttribute("data-cover-key");
+      const url = key ? historyCoverByKey[key] : null;
+      if (typeof url === "string" && url) {
+        const coverEl = el.querySelector(".queueCover");
+        const coverBoxEl = el.querySelector(".queueCoverBox");
+        if (coverEl && coverBoxEl) showCoverImage(coverEl, coverBoxEl, url);
+      }
+    });
+  } catch {}
 }
 
 async function importHistoryFile(file) {
@@ -1608,13 +1630,14 @@ async function handleAssistantResult(result) {
 
   const hasTracks = Array.isArray(result.play) && result.play.length > 0;
   if (hasTracks) {
+    const segueText = result.segue ? String(result.segue).trim() : "";
+    if (segueText) appendMessage("assistant", segueText);
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
     if (autoRecommendPlay) {
       setHint(__t("已推荐 {0} 首歌曲，正在开始播放", {0: result.play.length}));
       segueSpokenInQueue = 0;
       const nextItems = [];
-      const segueText = result.segue ? String(result.segue).trim() : "";
       let ttsAudioUrl = "";
       if (segueText) ttsAudioUrl = await requestTtsAudioUrl(segueText);
       if (segueText) {

@@ -354,13 +354,28 @@ function demoStreamUrl(track) {
   return "";
 }
 
+async function validateStreamUrl(url) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const resp = await fetch(url, { method: "HEAD", signal: controller.signal });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveTrackWithFallback(track) {
   try {
     const query = normalizeTrackQuery(track);
     if (query?.name && query?.artist) {
       const cached = await sendNativeWithTimeout({ type: "getCachedTrack", track: query }, 900);
       if (cached?.ok && cached?.hit && cached?.resolved?.streamUrl) {
-        return cached.resolved;
+        const valid = await validateStreamUrl(cached.resolved.streamUrl);
+        if (valid) return cached.resolved;
+        console.log("[background] cached streamUrl expired, re-resolving:", query.name);
+        void sendNativeWithTimeout({ type: "invalidateCache", track: query }, 600);
       }
     }
   } catch {}
@@ -407,7 +422,11 @@ async function warmCacheTracks(tracks) {
   for (const t of cleaned) {
     try {
       const cached = await sendNativeWithTimeout({ type: "getCachedTrack", track: t }, 600);
-      if (cached?.ok && cached?.hit) continue;
+      if (cached?.ok && cached?.hit && cached?.resolved?.streamUrl) {
+        const valid = await validateStreamUrl(cached.resolved.streamUrl);
+        if (valid) continue;
+        void sendNativeWithTimeout({ type: "invalidateCache", track: t }, 600);
+      }
       const resolved = await Promise.race([
         resolveTrackViaFetch(t),
         new Promise((resolve) => setTimeout(() => resolve(null), 6500)),
@@ -944,6 +963,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         const res = await sendNativeWithTimeout({ type: "getCachedTrack", track: query }, 900);
         sendResponse(res);
+        return;
+      }
+      if (msg.type === "getCachedCoverUrls") {
+        const tracks = Array.isArray(msg.tracks) ? msg.tracks.map(normalizeTrackQuery).filter((t) => t?.name && t?.artist) : [];
+        const res = await sendNativeWithTimeout({ type: "getCachedCoverUrls", tracks }, 3000);
+        sendResponse(res || { ok: false, error: "no response" });
+        return;
+      }
+      if (msg.type === "cleanupExpiredCache") {
+        const res = await sendNativeWithTimeout({ type: "cleanupExpiredCache" }, 3000);
+        sendResponse(res || { ok: false, error: "no response" });
         return;
       }
       if (msg.type === "exportMemoryMd") {
