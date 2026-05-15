@@ -918,8 +918,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             },
           };
 
-          const resp = await sendNative(payload);
-          if (!resp?.ok) return;
+          let resp;
+          const NB_TIMEOUT = 60000;
+          const NB_RETRIES = 2;
+          for (let attempt = 0; attempt <= NB_RETRIES; attempt++) {
+            if (attempt > 0) {
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+            resp = await Promise.race([
+              sendNative(payload),
+              new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "nextBatch timeout" }), NB_TIMEOUT)),
+            ]);
+            if (resp?.ok) break;
+          }
+          if (!resp?.ok) {
+            // Reset nextBatchInFlight in offscreen so future requests are not blocked
+            void sendOffscreenCommand("player.nextBatchResult", { result: { play: [] }, ttsAudioUrl: "" });
+            return;
+          }
 
           if (resp.profileSummary) {
             await chrome.storage.local.set({ profileSummary: resp.profileSummary });
@@ -948,6 +964,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             result: resp.result,
             ttsAudioUrl,
           });
+
+          // Notify sidepanel so the recommendation appears in chat history
+          // Use chatNotify (not chatResult) to avoid handleAssistantResult triggering replaceQueueAndPlay
+          broadcast({ type: "chatNotify", result: resp.result, toolContext: resp.toolContext || null });
         } catch (e) {
           console.warn("[background] nextBatch error", e);
         }

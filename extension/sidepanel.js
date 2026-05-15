@@ -1711,6 +1711,19 @@ port.onMessage.addListener(async (msg) => {
     }
     return;
   }
+  if (msg.type === "chatNotify") {
+    // Display-only: show DJ text and playlist in chat, but do not trigger playback
+    const result = msg.result;
+    if (result && typeof result === "object") {
+      const parts = [];
+      if (result.say) parts.push(result.say);
+      if (result.reason) parts.push(result.reason);
+      if (parts.length) appendMessage("assistant", parts.join("\n\n"));
+      const playListMessage = buildPlayListMessage(result.play);
+      if (playListMessage) appendMessage("assistant", playListMessage);
+    }
+    return;
+  }
   if (msg.type === "player.state") {
     applyPlayerState(msg.state);
     return;

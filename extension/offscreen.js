@@ -164,6 +164,7 @@ async function playTtsFromUrl(audioUrl, token) {
     await new Promise((resolve) => {
       el.onended = () => resolve();
       el.onerror = () => resolve();
+      setTimeout(() => resolve(), 30000);
     });
     try { URL.revokeObjectURL(url); } catch {}
     return true;
@@ -200,6 +201,7 @@ async function playTtsAudio(text, token) {
   await new Promise((resolve) => {
     el.onended = () => resolve();
     el.onerror = () => resolve();
+    setTimeout(() => resolve(), 30000);
   });
   try { URL.revokeObjectURL(url); } catch {}
   return true;
@@ -701,9 +703,12 @@ function bindAudioEvents(audio) {
     }
     await playNext();
   });
-  audio.addEventListener("error", () => {
+  audio.addEventListener("error", async () => {
+    if (audio !== activeAudio) return;
     void emitError(audio.error || new Error("audio error"), "audio");
     void emitState("audio:error");
+    // Auto-advance to next track on error so radio doesn't stop
+    await playNext();
   });
 }
 
@@ -754,7 +759,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.command === "player.nextBatchResult") {
         nextBatchInFlight = false;
         const result = msg.result;
-        if (!result?.play?.length) { sendResponse({ ok: true }); return; }
+        if (!result?.play?.length) {
+          // Queue exhausted with no new tracks — schedule a retry
+          if (queueIndex >= queue.length - 1 && !userPaused) {
+            setTimeout(() => { if (!nextBatchInFlight) requestNextBatch(); }, 5000);
+          }
+          sendResponse({ ok: true });
+          return;
+        }
         const newItems = [];
         const segueText = result.segue ? String(result.segue).trim() : "";
         if (segueText) {
@@ -772,7 +784,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           streamUrl: (t?.streamUrl || "").replace(/`/g, "").trim(),
           provider: t?.provider || "pending",
         })));
-        sendResponse({ ok: true, state: await appendQueue(newItems) });
+        // Capture queue state before append to detect idle
+        const wasIdle = activeAudio.paused && queueIndex >= queue.length - 1;
+        const startIndex = queue.length;
+        await appendQueue(newItems);
+        // Auto-resume if player was idle (not playing, at end of queue) and user hasn't paused
+        if (wasIdle && !userPaused) {
+          await playAt(startIndex);
+        }
+        sendResponse({ ok: true, state: snapshotState() });
         return;
       }
       if (msg.command === "player.reset") {
