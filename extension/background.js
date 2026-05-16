@@ -4,7 +4,6 @@ const MEMORY_TEMPLATE_PATH = "";
 const ports = new Set();
 const pendingLocationResolvers = new Map();
 
-let providerTabId = null;
 let externalInterruptActive = false;
 let welcomeInFlight = false;
 let autoRecommendDone = false;
@@ -292,64 +291,6 @@ async function resolveTrackViaFetch(track) {
   }
 }
 
-async function ensureProviderTab() {
-  if (providerTabId != null) {
-    try {
-      const tab = await chrome.tabs.get(providerTabId);
-      if (tab && !tab.discarded) return providerTabId;
-    } catch {
-      providerTabId = null;
-    }
-  }
-
-  const tab = await chrome.tabs.create({
-    url: "https://music.pjmp3.com/",
-    active: false,
-  });
-  providerTabId = tab.id;
-
-  await new Promise((r) => setTimeout(r, 2000));
-
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: providerTabId },
-      files: ["providers/paojiao/adapter.js"],
-    });
-  } catch {}
-
-  await new Promise((r) => setTimeout(r, 2000));
-
-  return providerTabId;
-}
-
-async function resolveTrackViaProviderTab(track) {
-  const tabId = await ensureProviderTab();
-  const result = await new Promise((resolve) => {
-    let attempts = 0;
-    const trySend = () => {
-      chrome.tabs.sendMessage(
-        tabId,
-        { type: "paojiao.resolveTrack", track },
-        (resp) => {
-          const err = chrome.runtime.lastError;
-          if (err && err.message.includes("Receiving end does not exist")) {
-            attempts++;
-            if (attempts < 20) {
-              setTimeout(trySend, 500);
-              return;
-            }
-            resolve(null);
-            return;
-          }
-          resolve(resp ?? null);
-        }
-      );
-    };
-    trySend();
-  });
-  return result;
-}
-
 function demoStreamUrl(track) {
   return "";
 }
@@ -393,17 +334,6 @@ async function resolveTrackWithFallback(track) {
         }
       } catch {}
       return directResult;
-    }
-
-    const tabResult = await resolveTrackViaProviderTab(track);
-    if (tabResult?.streamUrl) {
-      try {
-        const query = normalizeTrackQuery(track);
-        if (query?.name && query?.artist) {
-          void sendNativeWithTimeout({ type: "cacheTrack", track: query, resolved: tabResult }, 1200);
-        }
-      } catch {}
-      return tabResult;
     }
   }
 
@@ -763,7 +693,6 @@ async function updateExternalAudioState() {
   const audibleTabs = await chrome.tabs.query({ audible: true });
   const active = audibleTabs.some((t) => {
     if (t.id == null) return false;
-    if (t.id === providerTabId) return false;
     if (t.url?.startsWith("chrome-extension://")) return false;
     return true;
   });
@@ -1086,8 +1015,7 @@ chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo) => {
   if ("audible" in changeInfo) await updateExternalAudioState();
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
-  if (tabId === providerTabId) providerTabId = null;
+chrome.tabs.onRemoved.addListener(async () => {
   await updateExternalAudioState();
 });
 
