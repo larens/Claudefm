@@ -526,6 +526,47 @@ body {
   color: var(--text);
 }
 
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDot.idle {
+  background: #34d399;
+}
+
+.statusDot.busy {
+  background: #fbbf24;
+  animation: statusPulse 1.2s ease-in-out infinite;
+}
+
+.statusDot.error {
+  background: #f87171;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.statusText {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
 .djEdit {
   display: flex;
   align-items: center;
@@ -1134,4 +1175,76 @@ button:hover {
   margin-top: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.podcastBody {
+  flex: 1;
+  min-height: 0;
+  border-radius: 14px;
+  border: 1px solid var(--borderSoft);
+  background: var(--surface);
+  padding: 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.podcastRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.podcastTextarea {
+  width: 100%;
+  min-height: 120px;
+  border-radius: 10px;
+  border: 1px solid var(--borderSoft);
+  background: var(--panel);
+  padding: 8px 10px;
+  color: var(--text);
+  outline: none;
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.podcastFileRow {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.podcastFileBtn {
+  cursor: pointer;
+}
+
+.podcastFileName {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.podcastActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.podcastGenBtn {
+  background: rgba(122, 92, 255, 0.18);
+  border-color: rgba(122, 92, 255, 0.35);
+  font-weight: 600;
+}
+
+.podcastGenBtn:hover {
+  background: rgba(122, 92, 255, 0.28);
+}
+
+.podcastGenBtn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }

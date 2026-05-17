@@ -25,6 +25,9 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 - History playback list with detail view
 - Local track and cover cache
 - **TTS synthesis**: supports MiMo TTS with Claude TTS model fallback; DJ segue audio is pre-generated before queue push and served via a local HTTP server for fast playback
+- **Document-to-Podcast**: send a URL or document text and the AI auto-splits it into multi-chapter podcast segments with TTS playback; chapter titles display as `(1/3) Topic Name`, progress bar syncs in real time, and chapters play continuously one after another
+- **Silent URL fetching**: web page content is fetched via direct HTTP request first (no visible tab); falls back to WebBridge browser rendering when content is insufficient
+- **Playback mutex**: music recommendations do not interrupt an active podcast — recommendations are display-only during podcast playback; the podcast automatically takes over the play queue when started
 - Soul panel backed by a local music memory file
 - Local AI tool auto-detection and invocation (Claude Code, etc.)
 - Background playback: music continues playing after Side Panel is closed
@@ -47,6 +50,10 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
            │ Provider Tab / Fetch
            ▼
       https://music.pjmp3.com/*         Claudefm data dir
+
+  Podcast URL fetch priority:
+  1. Direct HTTP fetch (silent, no visible tab)
+  2. WebBridge browser rendering fallback (localhost:10086)
 ```
 
 ## Quick Start
@@ -234,6 +241,11 @@ Typical contents:
 - Confirm `api_key` is set in `tts-config.json`
 - Confirm the file is in the correct directory (macOS default: `~/Documents/Claudefm/tts-config.json`)
 - Restart the browser to apply the configuration
+
+- Document-to-Podcast generation fails
+- URL content fetching tries direct HTTP first; most SSR pages work without extra setup
+- For JS-heavy pages, start Kimi WebBridge (localhost:10086) as a fallback renderer
+- Podcast TTS synthesis depends on the TTS config — confirm `tts-config.json` is set up
 
 - Need a custom data directory
 - Set `dataDir` in the install config

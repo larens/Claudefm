@@ -12,6 +12,7 @@ let userPaused = false;
 let segueSpokenInQueue = 0;
 let speechActive = false;
 let speechPaused = false;
+let speechAudioEl = null;
 let segmentTarget = 0;
 let segmentTracks = [];
 let interludeInFlight = false;
@@ -32,6 +33,7 @@ function cloneTrack(track) {
     artist: track.artist || "",
     text: track.text || "",
     streamUrl: track.streamUrl || "",
+    ttsAudioUrl: track.ttsAudioUrl || "",
     provider: track.provider || "",
     cover: track.cover || "",
     durationMs: track.durationMs || 0,
@@ -45,8 +47,8 @@ function snapshotState() {
     queueIndex,
     currentTrack,
     playing: speechActive ? !speechPaused : !activeAudio.paused && Boolean(activeAudio.src),
-    currentTime: speechActive ? 0 : Number(activeAudio.currentTime || 0),
-    duration: speechActive ? 0 : Number(activeAudio.duration || 0),
+    currentTime: speechActive ? Number(speechAudioEl?.currentTime || 0) : Number(activeAudio.currentTime || 0),
+    duration: speechActive ? Number(speechAudioEl?.duration || 0) : Number(activeAudio.duration || 0),
     interrupted,
     userPaused,
     speechActive,
@@ -138,71 +140,93 @@ async function requestTtsAudio(text) {
 
 async function playTtsFromUrl(audioUrl, token) {
   try {
+    console.log("[offscreen] playTtsFromUrl fetching:", audioUrl);
     const resp = await fetch(audioUrl);
-    if (!resp.ok) return false;
+    if (!resp.ok) { console.warn("[offscreen] playTtsFromUrl fetch failed:", resp.status); return false; }
     if (token !== playRequestToken) return true;
     const blob = await resp.blob();
+    console.log("[offscreen] playTtsFromUrl blob size:", blob.size);
     if (!blob.size) return false;
     const url = URL.createObjectURL(blob);
     const el = new Audio();
     el.preload = "auto";
     el.src = url;
+    speechAudioEl = el;
 
     let played = false;
     await emitState("speech:start");
     await new Promise((resolve) => {
       el.oncanplaythrough = () => {
-        el.play().then(() => { played = true; }).catch(() => {}).finally(() => resolve());
+        el.play().then(() => { played = true; console.log("[offscreen] playTtsFromUrl play() ok, duration=" + el.duration); }).catch((e) => { console.warn("[offscreen] playTtsFromUrl play() failed:", e); }).finally(() => resolve());
       };
-      el.onerror = () => resolve();
-      setTimeout(() => resolve(), 5000);
+      el.onerror = (e) => { console.warn("[offscreen] playTtsFromUrl audio error:", e); resolve(); };
+      setTimeout(() => { console.warn("[offscreen] playTtsFromUrl canplaythrough timeout"); resolve(); }, 10000);
     });
     if (!played) {
+      console.warn("[offscreen] playTtsFromUrl not played, returning false");
+      speechAudioEl = null;
       try { URL.revokeObjectURL(url); } catch {}
       return false;
     }
+    // Periodically emit progress while playing
+    const progressInterval = setInterval(() => { emitState("speech:progress").catch(() => {}); }, 1000);
     await new Promise((resolve) => {
-      el.onended = () => resolve();
-      el.onerror = () => resolve();
-      setTimeout(() => resolve(), 30000);
+      el.onended = () => { console.log("[offscreen] playTtsFromUrl ended"); resolve(); };
+      el.onerror = (e) => { console.warn("[offscreen] playTtsFromUrl playback error:", e); resolve(); };
+      const dur = Number(el.duration || 0);
+      const timeout = isFinite(dur) && dur > 0 ? Math.max(dur * 1000 + 10000, 60000) : 120000;
+      console.log("[offscreen] playTtsFromUrl waiting for end, duration=" + dur + ", timeout=" + timeout);
+      setTimeout(() => { console.warn("[offscreen] playTtsFromUrl ended-by-timeout"); resolve(); }, timeout);
     });
+    clearInterval(progressInterval);
+    speechAudioEl = null;
     try { URL.revokeObjectURL(url); } catch {}
     return true;
-  } catch {
+  } catch (e) {
+    console.warn("[offscreen] playTtsFromUrl exception:", e);
     return false;
   }
 }
 
 async function playTtsAudio(text, token) {
   const audio = await requestTtsAudio(text);
-  if (!audio) return false;
+  if (!audio) { console.warn("[offscreen] playTtsAudio: no audio returned"); return false; }
   if (token !== playRequestToken) return true;
 
   const blob = audio.blob || base64ToBlob(audio.base64, audio.mime);
-  if (!blob || !blob.size) return false;
+  if (!blob || !blob.size) { console.warn("[offscreen] playTtsAudio: empty blob"); return false; }
   const url = URL.createObjectURL(blob);
   const el = new Audio();
   el.preload = "auto";
   el.src = url;
+  speechAudioEl = el;
 
   let played = false;
   await emitState("speech:start");
   await new Promise((resolve) => {
     el.oncanplaythrough = () => {
-      el.play().then(() => { played = true; }).catch(() => {}).finally(() => resolve());
+      el.play().then(() => { played = true; console.log("[offscreen] playTtsAudio play() ok, duration=" + el.duration); }).catch((e) => { console.warn("[offscreen] playTtsAudio play() failed:", e); }).finally(() => resolve());
     };
-    el.onerror = () => resolve();
-    setTimeout(() => resolve(), 5000);
+    el.onerror = (e) => { console.warn("[offscreen] playTtsAudio audio error:", e); resolve(); };
+    setTimeout(() => { console.warn("[offscreen] playTtsAudio canplaythrough timeout"); resolve(); }, 10000);
   });
   if (!played) {
+    console.warn("[offscreen] playTtsAudio not played");
+    speechAudioEl = null;
     try { URL.revokeObjectURL(url); } catch {}
     return false;
   }
+  const progressInterval = setInterval(() => { emitState("speech:progress").catch(() => {}); }, 1000);
   await new Promise((resolve) => {
-    el.onended = () => resolve();
-    el.onerror = () => resolve();
-    setTimeout(() => resolve(), 30000);
+    el.onended = () => { console.log("[offscreen] playTtsAudio ended"); resolve(); };
+    el.onerror = (e) => { console.warn("[offscreen] playTtsAudio playback error:", e); resolve(); };
+    const dur = Number(el.duration || 0);
+    const timeout = isFinite(dur) && dur > 0 ? Math.max(dur * 1000 + 10000, 60000) : 120000;
+    console.log("[offscreen] playTtsAudio waiting for end, duration=" + dur + ", timeout=" + timeout);
+    setTimeout(() => { console.warn("[offscreen] playTtsAudio ended-by-timeout"); resolve(); }, timeout);
   });
+  clearInterval(progressInterval);
+  speechAudioEl = null;
   try { URL.revokeObjectURL(url); } catch {}
   return true;
 }
@@ -365,6 +389,7 @@ async function playAt(index) {
   }
   speechActive = false;
   speechPaused = false;
+  speechAudioEl = null;
   await emitState("track:selected");
 
   if (isSpeechItem(track)) {
@@ -381,15 +406,19 @@ async function playAt(index) {
 
     // 使用预生成的 TTS 音频 URL 或按需生成
     if (track.ttsAudioUrl) {
-      await playTtsFromUrl(track.ttsAudioUrl, token);
+      const ttsResult = await playTtsFromUrl(track.ttsAudioUrl, token);
+      console.log(`[offscreen] playAt(${index}) playTtsFromUrl returned: ${ttsResult}, token=${token}, playRequestToken=${playRequestToken}`);
     } else {
-      await playTtsAudio(text, token);
+      const ttsResult = await playTtsAudio(text, token);
+      console.log(`[offscreen] playAt(${index}) playTtsAudio returned: ${ttsResult}, token=${token}, playRequestToken=${playRequestToken}`);
     }
-    if (token !== playRequestToken) return snapshotState();
+    if (token !== playRequestToken) { console.log(`[offscreen] playAt(${index}) token mismatch, skipping playNext`); return snapshotState(); }
 
     speechActive = false;
     speechPaused = false;
+    speechAudioEl = null;
     await emitState("speech:end");
+    console.log(`[offscreen] playAt(${index}) calling playNext, queueLen=${queue.length}`);
     await playNext();
     return snapshotState();
   }
@@ -458,9 +487,10 @@ async function playAt(index) {
 }
 
 async function playNext() {
-  if (!queue.length) return snapshotState();
+  if (!queue.length) { console.log("[offscreen] playNext: empty queue"); return snapshotState(); }
   const next = Math.min(queueIndex + 1, queue.length - 1);
-  if (next === queueIndex) return snapshotState();
+  console.log(`[offscreen] playNext: queueIndex=${queueIndex}, next=${next}, queueLen=${queue.length}`);
+  if (next === queueIndex) { console.log("[offscreen] playNext: already at end"); return snapshotState(); }
   return await playAt(next);
 }
 
@@ -695,10 +725,10 @@ function bindAudioEvents(audio) {
         resetLyricSegment();
       }
     }
-    const remainingMusicTracks = queue
-      .slice(finishedIndex + 1)
-      .filter(t => !isSpeechItem(t));
-    if (remainingMusicTracks.length <= 2) {
+    const remainingTracks = queue.slice(finishedIndex + 1);
+    const remainingMusicTracks = remainingTracks.filter(t => !isSpeechItem(t));
+    // Only request next batch if there are non-speech tracks ahead (not during podcast playback)
+    if (remainingMusicTracks.length <= 2 && remainingTracks.length <= remainingMusicTracks.length) {
       requestNextBatch();
     }
     await playNext();
@@ -756,8 +786,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: true, state: await insertTrackAtAndPlay(msg.track, Number(msg.index) || 0) });
         return;
       }
+      if (msg.command === "player.appendQueue") {
+        const items = Array.isArray(msg.items) ? msg.items : [];
+        await appendQueue(items);
+        sendResponse({ ok: true, state: snapshotState() });
+        return;
+      }
       if (msg.command === "player.nextBatchResult") {
         nextBatchInFlight = false;
+        // Skip if podcast (speech) items are in queue — don't mix in music
+        if (queue.some(t => isSpeechItem(t))) {
+          sendResponse({ ok: true });
+          return;
+        }
         const result = msg.result;
         if (!result?.play?.length) {
           // Queue exhausted with no new tracks — schedule a retry

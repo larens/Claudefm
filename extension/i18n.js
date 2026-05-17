@@ -9,6 +9,11 @@
     "回复有点慢，可能在排队/Host 忙，请稍等…": "回复有点慢，可能在排队/Host 忙，请稍等…",
     "未收到有效回复": "未收到有效回复",
     "上一条还在生成回复…": "上一条还在生成回复…",
+    "DJ 思考中…": "DJ 思考中…",
+    "文档播客生成中…": "文档播客生成中…",
+    "播客生成失败": "播客生成失败",
+    "播客生成超时": "播客生成超时",
+    "空闲": "空闲",
     "上一首": "上一首",
     "下一首": "下一首",
     "播放": "播放",
@@ -122,11 +127,21 @@
     "播放异常：{0}": "播放异常：{0}",
     "发生错误：{0}": "发生错误：{0}",
     "Host 无响应": "Host 无响应",
-    "初始化 music.md 失败。": "初始化 music.md 失败。",
+    "Host 响应超时，请稍后再试": "Host 响应超时，请稍后再试",
+    "Host 未授权，请重新安装 Host 后重启浏览器": "Host 未授权，请重新安装 Host 后重启浏览器",
+    "本地 AI 服务暂时不可用，请稍后再试": "本地 AI 服务暂时不可用，请稍后再试",
     "检测到其他页面播放音频，电台已暂停": "检测到其他页面播放音频，电台已暂停",
     "返回": "返回",
     "导入": "导入",
-    "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。": "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。"
+    "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。": "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。",
+    "文档转播客": "文档转播客",
+    "正在抓取网页内容…": "正在抓取网页内容…",
+    "正在生成播客脚本…": "正在生成播客脚本…",
+    "正在合成语音… ({0}/{1})": "正在合成语音… ({0}/{1})",
+    "第{0}章已就绪，正在播放…": "第{0}章已就绪，正在播放…",
+    "播客生成完成，正在播放": "播客生成完成，正在播放",
+    "播客生成完成，共{0}章，正在播放": "播客生成完成，共{0}章，正在播放",
+    "播客生成失败：{0}": "播客生成失败：{0}"
   };
 
   const enDict = {
@@ -136,6 +151,11 @@
     "回复有点慢，可能在排队/Host 忙，请稍等…": "Response is slow, host may be busy — please wait…",
     "未收到有效回复": "No valid response",
     "上一条还在生成回复…": "Previous message still generating…",
+    "DJ 思考中…": "DJ thinking…",
+    "文档播客生成中…": "Generating podcast…",
+    "播客生成失败": "Podcast failed",
+    "播客生成超时": "Podcast generation timeout",
+    "空闲": "Idle",
     "上一首": "Previous",
     "下一首": "Next",
     "播放": "Play",
@@ -249,11 +269,21 @@
     "播放异常：{0}": "Playback error: {0}",
     "发生错误：{0}": "Error: {0}",
     "Host 无响应": "Host not responding",
-    "初始化 music.md 失败。": "Failed to initialize music.md.",
+    "Host 响应超时，请稍后再试": "Host response timeout, please try again later",
+    "Host 未授权，请重新安装 Host 后重启浏览器": "Host not authorized, please reinstall Host and restart browser",
+    "本地 AI 服务暂时不可用，请稍后再试": "Local AI service is temporarily unavailable, please try again later",
     "检测到其他页面播放音频，电台已暂停": "Other page audio detected, radio paused",
     "返回": "Back",
     "导入": "Import",
-    "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。": "Initialized music.md (template from {0}). You can find it in your local Claudefm data directory (macOS: ~/Documents/Claudefm; Linux: ~/.local/share/Claudefm; Windows: %APPDATA%\\Claudefm)."
+    "已初始化 music.md（模板来自 {0}）。你可以在本机 Claudefm 数据目录中找到它（macOS 默认 ~/Documents/Claudefm；Linux 默认 ~/.local/share/Claudefm；Windows 默认 %APPDATA%\\Claudefm）。": "Initialized music.md (template from {0}). You can find it in your local Claudefm data directory (macOS: ~/Documents/Claudefm; Linux: ~/.local/share/Claudefm; Windows: %APPDATA%\\Claudefm).",
+    "文档转播客": "Doc to Podcast",
+    "正在抓取网页内容…": "Fetching web content…",
+    "正在生成播客脚本…": "Generating podcast script…",
+    "正在合成语音… ({0}/{1})": "Synthesizing audio… ({0}/{1})",
+    "第{0}章已就绪，正在播放…": "Chapter {0} ready, playing…",
+    "播客生成完成，正在播放": "Podcast generated, playing now",
+    "播客生成完成，共{0}章，正在播放": "Podcast ready, {0} chapters, playing now",
+    "播客生成失败：{0}": "Podcast generation failed: {0}"
   };
 
   function t(key, params) {

@@ -389,10 +389,15 @@ function readNativeMessageStream(onMessage) {
 }
 
 function sendNativeMessage(obj) {
-  const json = Buffer.from(JSON.stringify(obj), "utf8");
-  const header = Buffer.alloc(4);
-  header.writeUInt32LE(json.length, 0);
-  process.stdout.write(Buffer.concat([header, json]));
+  try {
+    const json = Buffer.from(JSON.stringify(obj), "utf8");
+    const header = Buffer.alloc(4);
+    header.writeUInt32LE(json.length, 0);
+    process.stdout.write(Buffer.concat([header, json]));
+  } catch (e) {
+    console.error(`[host] sendNativeMessage error: ${e.code || e.message || e}`);
+    try { process.exit(0); } catch {}
+  }
 }
 
 function safeJsonParse(text) {
@@ -450,7 +455,6 @@ function validateMimoResult(obj, lang) {
       .map((m) => ({ type: typeof m.type === "string" && m.type.trim() ? m.type.trim() : "taste", text: m.text.trim() }));
   }
   const result = { say, play, memory };
-  if (typeof obj.reason === "string" && obj.reason.trim()) result.reason = obj.reason.trim();
   if (typeof obj.segue === "string" && obj.segue.trim()) result.segue = obj.segue.trim();
   if (typeof obj.confirmRecommend === "boolean") result.confirmRecommend = obj.confirmRecommend;
   if (typeof obj.confirmQuestion === "string" && obj.confirmQuestion.trim()) result.confirmQuestion = obj.confirmQuestion.trim();
@@ -871,6 +875,112 @@ function ensureCacheFolders() {
   return { base, tracks, covers, tts };
 }
 
+// Direct HTTP fetch (no browser tab needed, works for most SSR pages)
+async function fetchUrlDirect(url) {
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+    const html = await resp.text();
+    let title = "";
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    if (titleMatch) title = titleMatch[1].trim();
+    let text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+      .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+      .replace(/<header[\s\S]*?<\/header>/gi, "")
+      .replace(/<[^>]+>/g, "\n")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, "\n\n")
+      .split("\n").map(l => l.trim()).filter(Boolean).join("\n")
+      .trim();
+    if (!text) return { ok: false, error: "no text in HTML" };
+    return { ok: true, text, title };
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+// Kimi WebBridge: fetch article content from a URL via the user's browser
+async function fetchUrlViaWebBridge(url) {
+  // Try direct HTTP fetch first (silent, no tab opening)
+  const direct = await fetchUrlDirect(url);
+  if (direct.ok && direct.text.length > 500) return direct;
+
+  // WebBridge fallback for JS-heavy pages
+  const WB_URL = "http://127.0.0.1:10086/command";
+  const SESSION = "claudefm-" + Date.now();
+  const TIMEOUT = 30000;
+
+  async function wbCall(action, args) {
+    const resp = await fetch(WB_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, args, session: SESSION }),
+      signal: AbortSignal.timeout(TIMEOUT),
+    });
+    if (!resp.ok) throw new Error(`WebBridge HTTP ${resp.status}`);
+    return resp.json();
+  }
+
+  try {
+    const nav = await wbCall("navigate", { url, newTab: false });
+    if (!nav?.success) return direct.ok ? direct : { ok: false, error: `navigate failed: ${JSON.stringify(nav)}` };
+
+    await new Promise(r => setTimeout(r, 3000));
+
+    const extract = await wbCall("evaluate", {
+      code: `(() => {
+        const selectors = [
+          '#js_content', '.rich_media_content', '.article-content',
+          'article', '[role="main"]', '.post-content', '.entry-content',
+          '.content', 'main'
+        ];
+        let el = null;
+        for (const s of selectors) { el = document.querySelector(s); if (el) break; }
+        if (!el) el = document.body;
+        el.querySelectorAll('script,style,nav,footer,header,.comment,.sidebar').forEach(e => e.remove());
+        const title = document.title || '';
+        const text = el.innerText || el.textContent || '';
+        return JSON.stringify({ title, text: text.trim() });
+      })()`,
+    });
+
+    void wbCall("close_tab", {}).catch(() => {});
+
+    const val = extract?.value;
+    if (!val) return direct.ok ? direct : { ok: false, error: "empty extract" };
+
+    let parsed;
+    try { parsed = typeof val === "string" ? JSON.parse(val) : val; } catch { parsed = { text: String(val) }; }
+    const text = String(parsed.text || "").trim();
+    if (!text) return direct.ok ? direct : { ok: false, error: "no text extracted from page" };
+
+    console.error(`[webbridge] fetched ${text.length} chars from ${url}`);
+    return { ok: true, text, title: parsed.title || "" };
+  } catch (e) {
+    const msg = e.message || String(e);
+    if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+      return direct.ok ? direct : { ok: false, error: "WebBridge 服务未运行，请先启动 Kimi WebBridge（localhost:10086）" };
+    }
+    return direct.ok ? direct : { ok: false, error: `WebBridge error: ${msg}` };
+  }
+}
+
 function sha1Hex(text) {
   return crypto.createHash("sha1").update(String(text || ""), "utf8").digest("hex");
 }
@@ -971,6 +1081,75 @@ async function mimoTtsSynthesize(text, config) {
   }
 }
 
+// Podcast-specific script generation (bypasses DJ system prompt and validateMimoResult)
+async function runPodcastScript(prompt, lang) {
+  const config = loadTtsConfig();
+  if (!config || !config.apiKey) {
+    return { ok: false, error: "cloud unavailable" };
+  }
+
+  const endpoint = config.endpoint || "https://api.xiaomimimo.com/v1/chat/completions";
+  const isEn = lang === "en";
+  const systemPrompt = isEn
+    ? "You are a professional podcast script editor. Extract core viewpoints from documents and rewrite them into engaging solo monologue scripts. Always output valid JSON as requested."
+    : "你是一个专业的播客脚本编辑，擅长提炼技术文档的核心观点并改编成适合语音播报的口语化独白脚本。请严格按照用户要求输出JSON格式。";
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: prompt },
+  ];
+
+  const body = JSON.stringify({ model: "mimo-v2-flash", messages, temperature: 0.7 });
+
+  console.error(`[podcast] script request: endpoint=${endpoint}, text=${prompt.slice(0, 60)}...`);
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "api-key": config.apiKey },
+      body,
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      return { ok: false, error: `MiMo API error ${resp.status}: ${errText.slice(0, 200)}` };
+    }
+
+    const result = await resp.json();
+    const raw = result?.choices?.[0]?.message?.content;
+    if (!raw) return { ok: false, error: "MiMo returned empty response" };
+
+    console.error(`[podcast] script response: ${raw.length} chars`);
+
+    // Extract JSON from response
+    let parsed = null;
+    try { parsed = JSON.parse(raw.trim()); } catch {}
+    if (!parsed) {
+      const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (fenced?.[1]) { try { parsed = JSON.parse(fenced[1].trim()); } catch {} }
+    }
+    if (!parsed) {
+      const start = raw.indexOf("{");
+      if (start >= 0) {
+        let depth = 0;
+        for (let i = start; i < raw.length; i++) {
+          if (raw[i] === "{") depth++;
+          else if (raw[i] === "}") {
+            depth--;
+            if (depth === 0) { try { parsed = JSON.parse(raw.slice(start, i + 1)); } catch {} break; }
+          }
+        }
+      }
+    }
+
+    if (!parsed) return { ok: false, error: "failed to parse podcast script JSON" };
+    return { ok: true, result: parsed };
+  } catch (e) {
+    return { ok: false, error: `podcast script request failed: ${e.message || e}` };
+  }
+}
+
 async function runMiMoChat(prompt, schema, lang) {
   const config = loadTtsConfig();
   if (!config || !config.apiKey) {
@@ -984,12 +1163,11 @@ async function runMiMoChat(prompt, schema, lang) {
   const systemPrompt = [
     ht("host.mimo.systemPrompt", lang),
     "JSON schema: {",
-    '  "say": "' + (isEn ? "string (required, brief DJ response)" : "string (必须，简短的DJ口吻回应)") + '",',
-    '  "reason": "' + (isEn ? "string (optional, recommendation reason)" : "string (可选，推荐理由)") + '",',
+    '  "say": "' + (isEn ? "string (required, brief DJ greeting, 1-2 sentences max, do NOT put recommendation text here)" : "string（必须，简短DJ问候语，最多1-2句，不要在这里写推荐内容）") + '",',
     '  "confirmRecommend": "boolean (' + (isEn ? "optional" : "可选") + ')",',
-    '  "confirmQuestion": "' + (isEn ? "string (optional, confirmation question)" : "string (可选，确认提问)") + '",',
+    '  "confirmQuestion": "' + (isEn ? "string (optional, confirmation question)" : "string（可选，确认提问）") + '",',
     '  "play": [{"name":"string","artist":"string","album":"string?","query":"string?","provider":"string?"}] (' + (isEn ? "3-5 songs" : "3-5首歌") + '),',
-    '  "segue": "string (' + (isEn ? "optional, 100-200 word DJ recommendation" : "可选，100-200字DJ推荐语") + ')",',
+    '  "segue": "string (' + (isEn ? "optional, 100-200 word DJ recommendation speech, this is the ONLY place for recommendation content" : "可选，100-200字DJ推荐语，推荐内容只写在这里") + ')",',
     '  "memory": [{"type":"string","text":"string"}] (' + (isEn ? "1-3 preference memories" : "1-3条偏好记忆") + ')',
     "}",
     ht("host.mimo.requiredFields", lang),
@@ -1088,10 +1266,12 @@ function ensureMediaServer() {
         if (req.method === "OPTIONS") { res.writeHead(204, corsHeaders); res.end(); return; }
 
         if (url.pathname.startsWith("/tts/")) {
-          const hash = url.pathname.replace(/^\/tts\//, "").replace(/[^a-f0-9]/gi, "");
+          const rawId = url.pathname.replace(/^\/tts\//, "");
+          const hash = rawId.replace(/[^a-z0-9_]/gi, "");
           if (!hash) { res.writeHead(404); res.end(); return; }
           const folders = ensureCacheFolders();
-          const filePath = path.join(folders.tts, `${hash}.mp3`);
+          let filePath = path.join(folders.tts, `${hash}.mp3`);
+          if (!fs.existsSync(filePath)) filePath = path.join(folders.tts, `${hash}.wav`);
           if (!fs.existsSync(filePath)) { res.writeHead(404); res.end(); return; }
           try {
             const buf = fs.readFileSync(filePath);
@@ -1953,6 +2133,14 @@ function optimizeMemoryFile(input) {
   });
 }
 
+// Prevent EPIPE crashes when extension disconnects mid-response
+process.stdout.on("error", (e) => {
+  if (e?.code === "EPIPE") {
+    console.error("[host] stdout EPIPE, exiting gracefully");
+    try { process.exit(0); } catch {}
+  }
+});
+
 readNativeMessageStream(async (msg) => {
   try {
     if (!msg || typeof msg !== "object") return;
@@ -2089,7 +2277,9 @@ readNativeMessageStream(async (msg) => {
         console.error(`[tts] mimo response: ok=${resp.ok}, error=${resp.error || ""}`);
         if (resp.ok) {
           cacheTtsAudio(text, resp.audio.base64);
-          sendNativeMessage({ ok: true, audio: resp.audio, provider: "mimo" });
+          const hash = sha1Hex(text);
+          const serverUrl = await getMediaServerUrl(`/tts/${hash}`);
+          sendNativeMessage({ ok: true, audioUrl: serverUrl, provider: "mimo" });
           return;
         }
       }
@@ -2121,7 +2311,9 @@ readNativeMessageStream(async (msg) => {
             continue;
           }
           cacheTtsAudio(text, b64);
-          sendNativeMessage({ ok: true, audio: { mime: guessed || mime || "audio/wav", base64: b64 }, provider: "claude_tts", model: m });
+          const hash = sha1Hex(text);
+          const serverUrl = await getMediaServerUrl(`/tts/${hash}`);
+          sendNativeMessage({ ok: true, audioUrl: serverUrl, provider: "claude_tts", model: m });
           return;
         }
         sendNativeMessage({ ok: false, error: lastError || "tts synthesis failed", modelsTried: tried });
@@ -2287,6 +2479,260 @@ readNativeMessageStream(async (msg) => {
       }
       const nextProfile = applyMemory(profileSummary, resp.result.memory || []);
       sendNativeMessage({ ok: true, result: resp.result, profileSummary: nextProfile, toolContext });
+      return;
+    }
+    if (msg.type === "docToPodcast") {
+      let docText = String(msg.text || "").trim();
+      if (!docText) {
+        sendNativeMessage({ ok: false, error: "empty document" });
+        return;
+      }
+
+      // If input is a URL, fetch content via Kimi WebBridge
+      if (/^https?:\/\/\S+$/i.test(docText)) {
+        sendNativeMessage({ type: "podcastProgress", step: "fetching", url: docText });
+        const fetched = await fetchUrlViaWebBridge(docText);
+        if (fetched.ok && fetched.text) {
+          docText = fetched.text;
+        } else {
+          sendNativeMessage({ ok: false, error: fetched.error || "failed to fetch URL content" });
+          return;
+        }
+      }
+
+      const lang = msg.lang || "zh";
+      const isEn = lang === "en";
+
+      // Auto-adaptive: chapter count based on content length
+      const len = docText.length;
+      let chapterCount, chapterHint;
+      if (len < 3000) { chapterCount = 2; chapterHint = isEn ? "2 chapters" : "2个章节"; }
+      else if (len < 8000) { chapterCount = 3; chapterHint = isEn ? "3 chapters" : "3个章节"; }
+      else if (len < 15000) { chapterCount = 4; chapterHint = isEn ? "4-5 chapters" : "4-5个章节"; }
+      else if (len < 25000) { chapterCount = 5; chapterHint = isEn ? "5-6 chapters" : "5-6个章节"; }
+      else { chapterCount = 6; chapterHint = isEn ? "6-8 chapters" : "6-8个章节"; }
+
+      const truncLen = 30000;
+      const truncated = docText.length > truncLen ? docText.slice(0, truncLen) : docText;
+
+      const scriptSchema = {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "podcast title, 5-15 words" },
+          segments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                heading: { type: "string", description: "chapter title, short" },
+                script: { type: "string", description: "full monologue text for this chapter" },
+              },
+              required: ["heading", "script"],
+            },
+          },
+        },
+        required: ["title", "segments"],
+      };
+
+      const styleHint = isEn
+        ? "Natural, friendly, conversational. Like chatting with a friend — use casual expressions, add natural pauses."
+        : '语气自然亲切，像和朋友聊天一样，不生硬、不机械。加入"其实""咱们""大家""说白了"等日常表达，句间预留短停顿。';
+
+      const scriptPrompt = isEn
+        ? [
+            `Extract the core viewpoints from the following document and rewrite into a concise solo monologue podcast script. The goal is information distillation — make complex ideas easy to understand through spoken explanation.`,
+            `1. Persona: Single host, ${styleHint}`,
+            `2. Content: Extract ONLY the most important viewpoints and key insights. Use your own words — do NOT copy the original. Cut all redundancy, keep only what a listener needs to understand the core ideas.`,
+            `3. Structure: Generate exactly ${chapterHint}. Each chapter = ONE core viewpoint. Merge related sub-topics. Natural transitions between chapters.`,
+            `4. Flow: Brief intro → key viewpoints → short summary.`,
+            `5. Format: Pure monologue text, no labels, conversational, suitable for AI voice synthesis.`,
+            `6. IMPORTANT: Be concise. Each chapter should be as short as possible while still being informative. Aim for ~${Math.floor(300 / chapterCount)} seconds of speech per chapter.`,
+            ``,
+            `Output JSON: { "title": "short title", "segments": [{ "heading": "chapter title", "script": "monologue" }] }`,
+            ``,
+            `--- DOCUMENT ---`,
+            truncated,
+          ].join("\n")
+        : [
+            `请将以下文档提炼核心观点，改编成精炼的单人独白式AI播客脚本。目标是信息提炼——让复杂概念通过口语化讲解变得易于理解。`,
+            `1. 人设：单人主播，${styleHint}`,
+            `2. 内容：只提炼最核心的观点和关键洞察，用自己的话重新组织——不要复述原文。删掉所有冗余，只保留听众理解核心观点所需的最少信息。`,
+            `3. 结构：严格生成${chapterHint}。每个章节 = 一个核心观点，合并关联子话题，章节间自然过渡。`,
+            `4. 节奏：简短引入→核心观点拆解→简要总结。`,
+            `5. 格式：纯独白文本，无标注，口语化，适配AI语音合成。`,
+            `6. 重点：精简。每章尽量短小但信息完整，目标每章约${Math.floor(300 / chapterCount)}秒语音。`,
+            ``,
+            `输出JSON：{ "title": "简短标题", "segments": [{ "heading": "章节标题", "script": "独白文本" }] }`,
+            ``,
+            `--- 文档内容 ---`,
+            truncated,
+          ].join("\n");
+
+      sendNativeMessage({ type: "podcastProgress", step: "script" });
+
+      const aiProvider = (msg.preferences && msg.preferences.aiProvider) || "local";
+      let scriptResp;
+      if (aiProvider === "cloud") {
+        scriptResp = await runPodcastScript(scriptPrompt, lang);
+      } else {
+        const detection = detectLocalAiTools();
+        const resolved = resolveLocalAiTool(msg.preferences || {}, detection);
+        if (!resolved.tool) {
+          sendNativeMessage({ ok: false, error: ht("host.error.noLocalAiTool", lang) });
+          return;
+        }
+        scriptResp = await runWithLocalAiTool(resolved.tool, scriptPrompt, scriptSchema);
+      }
+
+      if (!scriptResp.ok) {
+        sendNativeMessage({ ok: false, error: scriptResp.error || "script generation failed" });
+        return;
+      }
+
+      const title = scriptResp.result?.title ? String(scriptResp.result.title).trim() : "";
+
+      // Parse segments (new format) or fallback to single script (legacy)
+      let segments = [];
+      if (Array.isArray(scriptResp.result?.segments) && scriptResp.result.segments.length > 0) {
+        segments = scriptResp.result.segments
+          .filter(s => s && typeof s.script === "string" && s.script.trim())
+          .map(s => ({ heading: String(s.heading || "").trim(), script: String(s.script).trim() }));
+      } else if (typeof scriptResp.result?.script === "string" && scriptResp.result.script.trim()) {
+        segments = [{ heading: title, script: scriptResp.result.script.trim() }];
+      }
+      if (!segments.length) {
+        sendNativeMessage({ ok: false, error: "empty script" });
+        return;
+      }
+
+      const fullScript = segments.map(s => s.script).join("\n\n");
+
+      // Multi-segment TTS synthesis — progressive: send each segment as it completes
+      const TTS_CHUNK = 1800;
+      const folders = ensureCacheFolders();
+      let firstSegmentSent = false;
+      let okCount = 0;
+
+      for (let si = 0; si < segments.length; si++) {
+        const seg = segments[si];
+        sendNativeMessage({ type: "podcastProgress", step: "tts", current: si + 1, total: segments.length, heading: seg.heading });
+
+        const chunks = [];
+        for (let i = 0; i < seg.script.length; i += TTS_CHUNK) {
+          chunks.push(seg.script.slice(i, i + TTS_CHUNK));
+        }
+
+        const audioBuffers = [];
+        let ttsOk = true;
+        let ttsError = "";
+        for (const chunk of chunks) {
+          const cached = getCachedTts(chunk);
+          if (cached.ok && cached.hit && cached.audio?.base64) {
+            audioBuffers.push(Buffer.from(cached.audio.base64, "base64"));
+            continue;
+          }
+          const mimoCfg = loadTtsConfig();
+          if (mimoCfg) {
+            const resp = await mimoTtsSynthesize(chunk, mimoCfg);
+            if (resp.ok && resp.audio?.base64) {
+              const buf = Buffer.from(resp.audio.base64, "base64");
+              cacheTtsAudio(chunk, resp.audio.base64);
+              audioBuffers.push(buf);
+              continue;
+            }
+            ttsError = resp.error || "tts failed";
+          } else {
+            ttsError = "no tts provider";
+          }
+          ttsOk = false;
+          break;
+        }
+
+        if (!ttsOk || !audioBuffers.length) {
+          console.error(`[podcast] segment ${si + 1} TTS failed: ${ttsError}`);
+          continue;
+        }
+
+        // WAV concatenation for this segment
+        const isWav = audioBuffers[0].length > 4 &&
+          audioBuffers[0][0] === 0x52 && audioBuffers[0][1] === 0x49 &&
+          audioBuffers[0][2] === 0x46 && audioBuffers[0][3] === 0x46;
+
+        let combined;
+        if (isWav && audioBuffers.length > 1) {
+          const dataParts = [];
+          let sampleRate = 0;
+          let bitsPerSample = 0;
+          let numChannels = 0;
+          for (const buf of audioBuffers) {
+            if (buf.length < 44) { dataParts.push(buf); continue; }
+            if (!sampleRate) {
+              sampleRate = buf.readUInt32LE(24);
+              numChannels = buf.readUInt16LE(22);
+              bitsPerSample = buf.readUInt16LE(34);
+            }
+            dataParts.push(buf.subarray(44));
+          }
+          const totalDataLen = dataParts.reduce((s, b) => s + b.length, 0);
+          const header = Buffer.alloc(44);
+          header.write("RIFF", 0);
+          header.writeUInt32LE(36 + totalDataLen, 4);
+          header.write("WAVE", 8);
+          header.write("fmt ", 12);
+          header.writeUInt32LE(16, 16);
+          header.writeUInt16LE(1, 20);
+          header.writeUInt16LE(numChannels || 1, 22);
+          header.writeUInt32LE(sampleRate || 24000, 24);
+          header.writeUInt32LE((sampleRate || 24000) * (numChannels || 1) * ((bitsPerSample || 16) / 8), 28);
+          header.writeUInt16LE((numChannels || 1) * ((bitsPerSample || 16) / 8), 32);
+          header.writeUInt16LE(bitsPerSample || 16, 34);
+          header.write("data", 36);
+          header.writeUInt32LE(totalDataLen, 40);
+          combined = Buffer.concat([header, ...dataParts]);
+        } else {
+          combined = Buffer.concat(audioBuffers);
+        }
+
+        if (combined.length > 50 * 1024 * 1024) {
+          console.error(`[podcast] segment ${si + 1} too large`);
+          continue;
+        }
+
+        const segHash = sha1Hex(seg.script);
+        const podcastPath = path.join(folders.tts, `podcast_${segHash}_seg${si}.wav`);
+        try {
+          fs.writeFileSync(podcastPath, combined);
+        } catch (e) {
+          console.error(`[podcast] segment ${si + 1} write failed: ${e.message}`);
+          continue;
+        }
+
+        const serverUrl = await getMediaServerUrl(`/tts/podcast_${segHash}_seg${si}`);
+        okCount++;
+
+        // Send segment immediately — background will play first, append rest
+        sendNativeMessage({
+          type: "podcastSegment",
+          index: si,
+          total: segments.length,
+          heading: seg.heading,
+          audioUrl: serverUrl,
+          isFirst: !firstSegmentSent,
+          title,
+        });
+        firstSegmentSent = true;
+      }
+
+      // Final completion message
+      sendNativeMessage({
+        type: "podcastDone",
+        ok: okCount > 0,
+        title,
+        script: fullScript,
+        totalSegments: segments.length,
+        okSegments: okCount,
+        error: okCount === 0 ? "all segments failed" : undefined,
+      });
       return;
     }
     if (msg.type !== "chat") {

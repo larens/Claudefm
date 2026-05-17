@@ -30,6 +30,8 @@ const elAvatarImg = document.getElementById("avatarImg");
 const elAvatarFallback = document.getElementById("avatarFallback");
 const elDjDisplay = document.getElementById("djDisplay");
 const elDjNameText = document.getElementById("djNameText");
+const elStatusDot = document.getElementById("statusDot");
+const elStatusText = document.getElementById("statusText");
 const elProviderName = document.getElementById("providerName");
 const elBtnQueue = document.getElementById("btnQueue");
 const elQueue = document.getElementById("queue");
@@ -346,8 +348,11 @@ function buildSegueItem(text, ttsAudioUrl) {
 async function requestTtsAudioUrl(text) {
   try {
     const resp = await chrome.runtime.sendMessage({ type: "tts", text: String(text || "").trim() });
+    console.log("[ClaudeFM] requestTtsAudioUrl response:", JSON.stringify({ ok: resp?.ok, provider: resp?.provider, error: resp?.error, hasUrl: !!resp?.audioUrl }));
     if (resp?.ok && resp.audioUrl) return resp.audioUrl;
-  } catch {}
+  } catch (e) {
+    console.warn("[ClaudeFM] requestTtsAudioUrl error:", e);
+  }
   return "";
 }
 
@@ -410,10 +415,12 @@ function clearPendingAssistant() {
   pendingAssistantTimerC = null;
   if (pendingAssistantEl && pendingAssistantEl.isConnected) pendingAssistantEl.remove();
   pendingAssistantEl = null;
+  if (!podcastActive) setStatus("idle");
 }
 
 function startPendingAssistant() {
   clearPendingAssistant();
+  setStatus("busy", __t("DJ 思考中…"));
   const token = ++pendingAssistantToken;
   pendingAssistantEl = appendMessageDom("assistant", __t("正在思考…"));
   pendingAssistantEl.classList.add("pending");
@@ -791,6 +798,12 @@ function setHint(text) {
     elComposerHint.textContent = "";
     hintTimer = null;
   }, 2600);
+}
+
+function setStatus(state, text) {
+  if (!elStatusDot || !elStatusText) return;
+  elStatusDot.className = "statusDot " + (state || "idle");
+  elStatusText.textContent = state === "idle" ? (text || __t("空闲")) : (text || "");
 }
 
 async function startNewSession() {
@@ -1627,7 +1640,6 @@ async function handleAssistantResult(result) {
 
   const parts = [];
   if (result.say) parts.push(result.say);
-  if (result.reason) parts.push(result.reason);
   if (parts.length) appendMessage("assistant", parts.join("\n\n"));
 
   if (result.confirmRecommend) {
@@ -1642,6 +1654,11 @@ async function handleAssistantResult(result) {
     if (segueText) appendMessage("assistant", segueText);
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
+    if (podcastActive) {
+      // Podcast is generating/playing — don't interrupt it, just show the recommendation text
+      setHint(__t("播客正在播放，推荐已记录"));
+      return;
+    }
     if (autoRecommendPlay) {
       setHint(__t("已推荐 {0} 首歌曲，正在开始播放", {0: result.play.length}));
       segueSpokenInQueue = 0;
@@ -1659,6 +1676,7 @@ async function handleAssistantResult(result) {
           provider: t?.provider || "pending",
         }))
       );
+      console.log("[ClaudeFM] replaceQueueAndPlay:", nextItems.length, "items, first:", nextItems[0]?.kind, "ttsUrl:", nextItems[0]?.ttsAudioUrl || "(empty)");
       await sendPlayerCommand("player.replaceQueueAndPlay", { queue: nextItems, startIndex: 0 });
     } else {
       showRecommendPush(result.play, result.segue);
@@ -1712,13 +1730,10 @@ port.onMessage.addListener(async (msg) => {
     return;
   }
   if (msg.type === "chatNotify") {
-    // Display-only: show DJ text and playlist in chat, but do not trigger playback
+    // Display-only: show playlist in chat, but do not trigger playback
+    // Skip result.say — greeting was already shown in the initial chatResult
     const result = msg.result;
     if (result && typeof result === "object") {
-      const parts = [];
-      if (result.say) parts.push(result.say);
-      if (result.reason) parts.push(result.reason);
-      if (parts.length) appendMessage("assistant", parts.join("\n\n"));
       const playListMessage = buildPlayListMessage(result.play);
       if (playListMessage) appendMessage("assistant", playListMessage);
     }
@@ -1732,6 +1747,48 @@ port.onMessage.addListener(async (msg) => {
     const message = msg.error ? String(msg.error) : __t("未知错误");
     if (msg.context) setHint(`${msg.context}: ${message}`);
     else setHint(__t("播放异常：{0}", {0: message}));
+    return;
+  }
+  if (msg.type === "docToPodcastProgress") {
+    if (msg.step === "fetching") {
+      setHint(__t("正在抓取网页内容…"));
+      setStatus("busy", __t("正在抓取网页内容…"));
+    } else if (msg.step === "script") {
+      setHint(__t("正在生成播客脚本…"));
+      setStatus("busy", __t("正在生成播客脚本…"));
+    } else if (msg.step === "tts") {
+      setHint(__t("正在合成语音… ({0}/{1})", {0: msg.current, 1: msg.total}));
+      setStatus("busy", __t("正在合成语音… ({0}/{1})", {0: msg.current, 1: msg.total}));
+    } else if (msg.step === "segmentReady") {
+      setHint(__t("第{0}章已就绪，正在播放…", {0: msg.current}));
+      setStatus("busy", __t("第{0}章已就绪，正在播放…", {0: msg.current}));
+      // Pull player state so UI (track name, time, progress) updates immediately
+      requestPlayerState();
+    }
+    return;
+  }
+  if (msg.type === "docToPodcastResult") {
+    if (msg.ok) {
+      const segCount = Array.isArray(msg.segments) ? msg.segments.length : 0;
+      if (segCount > 0) {
+        setHint(__t("播客生成完成，共{0}章，正在播放", {0: segCount}));
+      } else {
+        setHint(__t("播客生成完成，正在播放"));
+      }
+      setStatus("idle");
+      const parts = [];
+      if (msg.title) parts.push(`${__t("文档转播客")}：${msg.title}`);
+      if (segCount > 1) {
+        parts.push(msg.segments.map((s, i) => `${i + 1}. ${s.heading}`).join("\n"));
+      }
+      if (parts.length) appendMessage("assistant", parts.join("\n\n"));
+    } else {
+      setHint(__t("播客生成失败：{0}", {0: msg.error || __t("未知错误")}));
+      setStatus("error", __t("播客生成失败"));
+    }
+    if (podcastTimeoutTimer) { clearTimeout(podcastTimeoutTimer); podcastTimeoutTimer = null; }
+    if (podcastStatePoll) { clearInterval(podcastStatePoll); podcastStatePoll = null; }
+    podcastActive = false;
     return;
   }
 });
@@ -1755,6 +1812,14 @@ elSend.addEventListener("click", async () => {
   appendMessage("user", text);
   lastChatText = text;
   clearRecommendCard();
+
+  // Auto-detect URL and trigger podcast generation; skip DJ chat if URL found
+  const detectedUrl = extractFirstUrl(text);
+  if (detectedUrl && !podcastActive) {
+    void triggerPodcastFromUrl(detectedUrl);
+    return;
+  }
+
   startPendingAssistant();
   try {
     void chrome.runtime.sendMessage({ type: "chat", text, chatOnly: true });
@@ -2024,6 +2089,52 @@ if (elSettingsPanel) {
   });
 }
 
+// Auto-detect URLs in chat and trigger podcast generation
+let podcastActive = false;
+let podcastTimeoutTimer = null;
+let podcastStatePoll = null;
+
+function extractFirstUrl(text) {
+  const m = text.match(/https?:\/\/[^\s<>"')\]]+/i);
+  return m ? m[0] : null;
+}
+
+async function triggerPodcastFromUrl(url) {
+  if (podcastActive) return;
+  podcastActive = true;
+  if (podcastTimeoutTimer) clearTimeout(podcastTimeoutTimer);
+  if (podcastStatePoll) clearInterval(podcastStatePoll);
+  podcastStatePoll = setInterval(() => { requestPlayerState(); }, 2000);
+  podcastTimeoutTimer = setTimeout(() => {
+    podcastActive = false;
+    if (podcastStatePoll) { clearInterval(podcastStatePoll); podcastStatePoll = null; }
+    setStatus("error", __t("播客生成超时"));
+    podcastTimeoutTimer = null;
+  }, 600000);
+  setStatus("busy", __t("文档播客生成中…"));
+  setHint(__t("正在抓取网页内容…"));
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "docToPodcast", text: url });
+    console.log("[ClaudeFM] docToPodcast response:", resp);
+    if (!resp?.ok) {
+      const errText = resp?.error || __t("未知错误");
+      setHint(__t("播客生成失败：{0}", {0: errText}));
+      setStatus("error", __t("播客生成失败"));
+      if (podcastTimeoutTimer) { clearTimeout(podcastTimeoutTimer); podcastTimeoutTimer = null; }
+      if (podcastStatePoll) { clearInterval(podcastStatePoll); podcastStatePoll = null; }
+      podcastActive = false;
+    }
+    // On success, docToPodcastResult broadcast will handle completion
+  } catch (e) {
+    console.error("[ClaudeFM] docToPodcast sendMessage error:", e);
+    setHint(__t("播客生成失败：{0}", {0: e?.message || String(e)}));
+    setStatus("error", __t("播客生成失败"));
+    if (podcastTimeoutTimer) { clearTimeout(podcastTimeoutTimer); podcastTimeoutTimer = null; }
+    if (podcastStatePoll) { clearInterval(podcastStatePoll); podcastStatePoll = null; }
+    podcastActive = false;
+  }
+}
+
 if (elSettingsKeepSession) {
   elSettingsKeepSession.addEventListener("change", async () => {
     const enabled = Boolean(elSettingsKeepSession.checked);
@@ -2199,6 +2310,7 @@ safePost({ type: "ready", lang: __lang });
     await clearSavedSession();
   }
   await requestPlayerState();
+  setStatus("idle");
 
   window.addEventListener("pagehide", () => {
     if (keepSessionOnClose) void saveSessionNow();

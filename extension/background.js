@@ -125,6 +125,34 @@ function sendNative(payload) {
   });
 }
 
+function sendNativeStreaming(payload, onProgress, onSegment) {
+  return new Promise((resolve) => {
+    const port = chrome.runtime.connectNative(HOST_NAME);
+    let settled = false;
+    port.onMessage.addListener((msg) => {
+      if (msg?.type === "podcastProgress") {
+        onProgress?.(msg);
+      } else if (msg?.type === "podcastSegment") {
+        onSegment?.(msg);
+      } else if (msg?.type === "podcastDone") {
+        if (!settled) { settled = true; resolve(msg); }
+        try { port.disconnect(); } catch {}
+      } else {
+        // Legacy fallback: treat unknown message as final result
+        if (!settled) { settled = true; resolve(msg); }
+        try { port.disconnect(); } catch {}
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, error: chrome.runtime.lastError?.message || "host disconnected" });
+      }
+    });
+    port.postMessage(payload);
+  });
+}
+
 async function sendNativeWithTimeout(payload, timeoutMs = 1200) {
   const timeoutResp = new Promise((resolve) => {
     setTimeout(() => resolve({ ok: false, error: "timeout" }), timeoutMs);
@@ -415,20 +443,28 @@ async function onChat(text, options = {}) {
 
   const resp = await Promise.race([
     sendNative(payload),
-    new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "Host 响应超时，请稍后再试" }), 135000)),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "timeout" }), 135000)),
   ]);
   if (!resp?.ok) {
     const extensionId = chrome.runtime.id;
     const toolLabel = resp?.toolContext?.toolLabel || "本地 AI 工具";
-    const hint =
-      resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed")
-        ? `Native Host 未授权（extensionId=${extensionId}）。请更新 host/install-<platform>.json（或 host/install-macos.json 兼容）里的 extensionId，并运行：node host/install.mjs（执行后需要完全退出并重启浏览器）`
-        : `${toolLabel} 不可用或 Host 未安装（extensionId=${extensionId}）。可运行：node host/install.mjs`;
+    const isForbidden = resp?.error?.includes("forbidden") || resp?.error?.includes("Not allowed");
+    // Log technical details to console for debugging
+    console.warn("[ClaudeFM] Host error:", {
+      extensionId,
+      toolLabel,
+      error: resp?.error,
+      isForbidden,
+    });
+    const userMsg = isForbidden
+      ? bgT("Host 未授权，请重新安装 Host 后重启浏览器", "Host not authorized. Please reinstall Host and restart your browser.")
+      : (resp?.error === "timeout"
+        ? bgT("Host 响应超时，请稍后再试", "Host response timeout, please try again later.")
+        : bgT("本地 AI 服务暂时不可用，请稍后再试", "Local AI service is temporarily unavailable, please try again later."));
     broadcast({
       type: "chatResult",
-      result: { say: resp?.error || bgT("Claude Code 不可用或 Host 未安装。", "Claude Code unavailable or Host not installed."), play: [] },
+      result: { say: userMsg, play: [] },
     });
-    broadcast({ type: "chatResult", result: { say: hint, play: [] } });
     return;
   }
 
@@ -593,17 +629,10 @@ async function maybeWelcome(port) {
       templatePath: MEMORY_TEMPLATE_PATH,
     });
     if (!ensure?.ok) {
-      const extensionId = chrome.runtime.id;
+      console.warn("[ClaudeFM] Init music.md failed:", ensure?.error);
       broadcast({
         type: "chatResult",
-        result: { say: ensure?.error || bgT("初始化 music.md 失败。", "Failed to initialize music.md."), play: [] },
-      });
-      broadcast({
-        type: "chatResult",
-        result: {
-          say: `Native Host 不可用或未授权（extensionId=${extensionId}）。可更新 host/install-<platform>.json（或 host/install-macos.json 兼容）的 extensionId 后执行：node host/install.mjs（执行后需要完全退出并重启浏览器；若仍 forbidden 请检查 chrome://policy 是否限制 NativeMessaging）`,
-          play: [],
-        },
+        result: { say: bgT("本地 AI 服务暂时不可用，请稍后再试", "Local AI service is temporarily unavailable, please try again later."), play: [] },
       });
       return;
     }
@@ -965,6 +994,92 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           tracks,
         });
         sendResponse(res);
+        return;
+      }
+      if (msg.type === "docToPodcast") {
+        sendResponse({ ok: true });
+        try {
+          const prefs = await getPreferences();
+          const payload = {
+            type: "docToPodcast",
+            text: msg.text || "",
+            lang: currentLang,
+            preferences: {
+              localAiToolMode: prefs.localAiToolMode || "auto",
+              localAiToolId: prefs.localAiToolId || "",
+              aiProvider: prefs.aiProvider || "local",
+            },
+          };
+
+          let firstSegmentReplaced = false;
+          const collectedSegments = [];
+
+          const resp = await Promise.race([
+            sendNativeStreaming(
+              payload,
+              // onProgress
+              (progress) => {
+                broadcast({ type: "docToPodcastProgress", ...progress });
+              },
+              // onSegment — progressive: play first segment immediately, append rest
+              async (seg) => {
+                collectedSegments.push(seg);
+                const segLabel = `(${seg.index + 1}/${seg.total}) ${seg.heading || seg.title || "AI 播客"}`;
+                const track = {
+                  kind: "speech",
+                  text: segLabel,
+                  ttsAudioUrl: seg.audioUrl,
+                  name: segLabel,
+                  artist: "文档播客",
+                };
+                if (!firstSegmentReplaced) {
+                  firstSegmentReplaced = true;
+                  await sendOffscreenCommand("player.replaceQueueAndPlay", {
+                    queue: [track],
+                    startIndex: 0,
+                  });
+                } else {
+                  await sendOffscreenCommand("player.appendQueue", {
+                    items: [track],
+                  });
+                }
+                broadcast({
+                  type: "docToPodcastProgress",
+                  step: "segmentReady",
+                  current: seg.index + 1,
+                  total: seg.total,
+                  heading: seg.heading,
+                });
+              },
+            ),
+            new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "timeout" }), 600000)),
+          ]);
+
+          if (!resp?.ok) {
+            console.warn("[ClaudeFM] docToPodcast failed:", resp?.error);
+            broadcast({
+              type: "docToPodcastResult",
+              ok: false,
+              error: resp?.error || "generation failed",
+            });
+            return;
+          }
+
+          broadcast({
+            type: "docToPodcastResult",
+            ok: true,
+            title: resp.title || "",
+            script: resp.script || "",
+            segments: collectedSegments.map(s => ({ heading: s.heading || "", audioUrl: s.audioUrl || "" })),
+          });
+        } catch (e) {
+          const message = e?.message ? String(e.message) : String(e);
+          broadcast({
+            type: "docToPodcastResult",
+            ok: false,
+            error: message,
+          });
+        }
         return;
       }
       if (msg.type === "tts") {
