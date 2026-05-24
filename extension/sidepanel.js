@@ -71,6 +71,20 @@ const elSettingsAutoRecommend = document.getElementById("settingsAutoRecommend")
 const elSettingsNcmApiBase = document.getElementById("settingsNcmApiBase");
 const elSettingsNcmApiBaseSave = document.getElementById("settingsNcmApiBaseSave");
 
+const elSettingsDjAvatarPreview = document.getElementById("settingsDjAvatarPreview");
+const elSettingsDjAvatarFallback = document.getElementById("settingsDjAvatarFallback");
+const elSettingsDjAvatarImg = document.getElementById("settingsDjAvatarImg");
+const elSettingsDjAvatarUpload = document.getElementById("settingsDjAvatarUpload");
+const elSettingsDjAvatarFile = document.getElementById("settingsDjAvatarFile");
+
+const elSettingsUserNicknameInput = document.getElementById("settingsUserNicknameInput");
+const elSettingsUserNicknameSave = document.getElementById("settingsUserNicknameSave");
+const elSettingsUserAvatarPreview = document.getElementById("settingsUserAvatarPreview");
+const elSettingsUserAvatarFallback = document.getElementById("settingsUserAvatarFallback");
+const elSettingsUserAvatarImg = document.getElementById("settingsUserAvatarImg");
+const elSettingsUserAvatarUpload = document.getElementById("settingsUserAvatarUpload");
+const elSettingsUserAvatarFile = document.getElementById("settingsUserAvatarFile");
+
 const elAiToolModeAuto = document.getElementById("aiToolModeAuto");
 const elAiToolModeManual = document.getElementById("aiToolModeManual");
 const elAiToolSelect = document.getElementById("aiToolSelect");
@@ -122,6 +136,9 @@ let activeSegueSegmentIdx = -1;
 let activeSegueLastCharIdx = -1;
 let segueHighlightTimer = null;
 let segueHighlightStart = 0;
+
+let userNickname = "";
+let userAvatarDataUrl = "";
 
 const SESSION_KEY = "sidepanelSessionV1";
 let keepSessionOnClose = true;
@@ -228,7 +245,7 @@ function applyPlayerState(state) {
     if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
     applySegueProgress(playerCurrentTime, playerDuration);
   } else if (!speechActive && activeSegueSegments.length && !segueHighlightTimer) {
-    clearActiveSegue();
+    finishActiveSegue();
   }
   renderQueue();
 }
@@ -383,11 +400,36 @@ function setDjNameUI(name) {
   elDjNameText.textContent = djName;
 }
 
+function buildChatAvatarEl(src, fallbackText, extraClass) {
+  const wrap = document.createElement("div");
+  wrap.className = "chatAvatar" + (extraClass ? " " + extraClass : "");
+  if (src) {
+    const img = document.createElement("img");
+    img.className = "chatAvatarImg";
+    img.src = src;
+    wrap.appendChild(img);
+  } else {
+    wrap.textContent = fallbackText;
+  }
+  return wrap;
+}
+
 function appendMessageDom(role, text) {
+  const isUser = role === "user";
+  const row = document.createElement("div");
+  row.className = "msgRow " + role;
+  if (!isUser) {
+    const djSrc = elAvatarImg && elAvatarImg.style.display !== "none" ? elAvatarImg.src : "";
+    row.appendChild(buildChatAvatarEl(djSrc, "DJ"));
+  }
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   div.textContent = text;
-  elChat.appendChild(div);
+  row.appendChild(div);
+  if (isUser) {
+    row.appendChild(buildChatAvatarEl(userAvatarDataUrl, (userNickname || "U")[0].toUpperCase(), "chatAvatarUser"));
+  }
+  elChat.appendChild(row);
   elChat.scrollTop = elChat.scrollHeight;
   return div;
 }
@@ -416,13 +458,17 @@ function splitSegueSegments(text) {
 }
 
 function appendSegueMessage(text) {
-  clearActiveSegue();
+  finishActiveSegue();
   const parts = splitSegueSegments(text);
   if (!parts.length) return;
   const totalChars = [...text.replace(/\s/g, "")].length;
+  const djSrc = elAvatarImg && elAvatarImg.style.display !== "none" ? elAvatarImg.src : "";
   parts.forEach((segText, idx) => {
+    const row = document.createElement("div");
+    row.className = "msgRow assistant" + (idx > 0 ? " segue-hidden" : "");
+    row.appendChild(buildChatAvatarEl(djSrc, "DJ"));
     const div = document.createElement("div");
-    div.className = "msg assistant segue-msg" + (idx > 0 ? " segue-hidden" : "");
+    div.className = "msg assistant segue-msg";
     const chars = [...segText];
     chars.forEach((ch) => {
       const span = document.createElement("span");
@@ -430,8 +476,9 @@ function appendSegueMessage(text) {
       span.textContent = ch;
       div.appendChild(span);
     });
-    elChat.appendChild(div);
-    activeSegueSegments.push({ el: div, chars: Array.from(div.querySelectorAll(".segue-char")) });
+    row.appendChild(div);
+    elChat.appendChild(row);
+    activeSegueSegments.push({ el: row, chars: Array.from(div.querySelectorAll(".segue-char")) });
   });
   elChat.scrollTop = elChat.scrollHeight;
   activeSegueSegmentIdx = 0;
@@ -491,11 +538,11 @@ function applySegueProgress(currentTime, duration) {
   }
 }
 
-function clearActiveSegue() {
+function finishActiveSegue() {
   if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
   activeSegueSegments.forEach((seg) => {
-    seg.chars.forEach((c) => c.classList.remove("segue-read"));
-    seg.el.remove();
+    seg.el.classList.remove("segue-hidden");
+    seg.chars.forEach((c) => c.classList.add("segue-read"));
   });
   activeSegueSegments = [];
   activeSegueSegmentIdx = -1;
@@ -514,7 +561,10 @@ function clearPendingAssistant() {
   pendingAssistantTimerA = null;
   pendingAssistantTimerB = null;
   pendingAssistantTimerC = null;
-  if (pendingAssistantEl && pendingAssistantEl.isConnected) pendingAssistantEl.remove();
+  if (pendingAssistantEl && pendingAssistantEl.isConnected) {
+    const row = pendingAssistantEl.closest(".msgRow");
+    if (row) row.remove(); else pendingAssistantEl.remove();
+  }
   pendingAssistantEl = null;
   if (!podcastActive) setStatus("idle");
 }
@@ -916,6 +966,10 @@ async function startNewSession() {
   setHint("");
 
   if (elChat) elChat.innerHTML = "";
+  activeSegueSegments = [];
+  activeSegueSegmentIdx = -1;
+  activeSegueLastCharIdx = -1;
+  if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
   sessionMessages = [];
   await clearSavedSession();
 }
@@ -972,6 +1026,32 @@ function openSettingsPanel() {
   refreshOverlayTransientUiState();
   refreshSettingsDjNameUI();
   applyProviderVisibility();
+  // DJ avatar preview
+  if (elSettingsDjAvatarImg) {
+    const djSrc = elAvatarImg && elAvatarImg.style.display !== "none" ? elAvatarImg.src : "";
+    if (djSrc) {
+      elSettingsDjAvatarImg.src = djSrc;
+      elSettingsDjAvatarImg.style.display = "block";
+      if (elSettingsDjAvatarFallback) elSettingsDjAvatarFallback.style.display = "none";
+    } else {
+      elSettingsDjAvatarImg.removeAttribute("src");
+      elSettingsDjAvatarImg.style.display = "none";
+      if (elSettingsDjAvatarFallback) elSettingsDjAvatarFallback.style.display = "grid";
+    }
+  }
+  // User settings
+  if (elSettingsUserNicknameInput) elSettingsUserNicknameInput.value = userNickname;
+  if (elSettingsUserAvatarImg) {
+    if (userAvatarDataUrl) {
+      elSettingsUserAvatarImg.src = userAvatarDataUrl;
+      elSettingsUserAvatarImg.style.display = "block";
+      if (elSettingsUserAvatarFallback) elSettingsUserAvatarFallback.style.display = "none";
+    } else {
+      elSettingsUserAvatarImg.removeAttribute("src");
+      elSettingsUserAvatarImg.style.display = "none";
+      if (elSettingsUserAvatarFallback) elSettingsUserAvatarFallback.style.display = "grid";
+    }
+  }
 }
 
 function closeSettingsPanel() {
@@ -2372,6 +2452,69 @@ if (elSettingsNcmApiBase) {
   });
 }
 
+// User nickname
+if (elSettingsUserNicknameSave && elSettingsUserNicknameInput) {
+  elSettingsUserNicknameSave.addEventListener("click", async () => {
+    const raw = String(elSettingsUserNicknameInput.value || "").trim();
+    userNickname = Array.from(raw).slice(0, 8).join("");
+    await patchPreferences({ userNickname });
+    elSettingsUserNicknameInput.value = userNickname;
+    setSettingsStatus("已保存");
+  });
+  elSettingsUserNicknameInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      elSettingsUserNicknameSave.click();
+    }
+  });
+}
+
+// User avatar
+if (elSettingsUserAvatarUpload && elSettingsUserAvatarFile) {
+  elSettingsUserAvatarUpload.addEventListener("click", () => elSettingsUserAvatarFile.click());
+  elSettingsUserAvatarFile.addEventListener("change", async () => {
+    const file = elSettingsUserAvatarFile.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await cropAvatar(file);
+      userAvatarDataUrl = dataUrl;
+      await patchPreferences({ userAvatarDataUrl: dataUrl });
+      if (elSettingsUserAvatarImg) {
+        elSettingsUserAvatarImg.src = dataUrl;
+        elSettingsUserAvatarImg.style.display = "block";
+      }
+      if (elSettingsUserAvatarFallback) elSettingsUserAvatarFallback.style.display = "none";
+      setSettingsStatus("已保存");
+    } catch {
+      setSettingsStatus("头像处理失败");
+    }
+    elSettingsUserAvatarFile.value = "";
+  });
+}
+
+// DJ avatar (settings)
+if (elSettingsDjAvatarUpload && elSettingsDjAvatarFile) {
+  elSettingsDjAvatarUpload.addEventListener("click", () => elSettingsDjAvatarFile.click());
+  elSettingsDjAvatarFile.addEventListener("change", async () => {
+    const file = elSettingsDjAvatarFile.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await cropAvatar(file);
+      await patchPreferences({ avatarDataUrl: dataUrl });
+      setAvatarUI(dataUrl);
+      if (elSettingsDjAvatarImg) {
+        elSettingsDjAvatarImg.src = dataUrl;
+        elSettingsDjAvatarImg.style.display = "block";
+      }
+      if (elSettingsDjAvatarFallback) elSettingsDjAvatarFallback.style.display = "none";
+      setSettingsStatus("已保存");
+    } catch {
+      setSettingsStatus("头像处理失败");
+    }
+    elSettingsDjAvatarFile.value = "";
+  });
+}
+
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (elHistoryPanel && !elHistoryPanel.hidden) {
@@ -2395,6 +2538,14 @@ safePost({ type: "ready", lang: __lang });
   await loadTrackVotes();
   setDjNameUI(prefs.djName || "Claudefm");
   setAvatarUI(prefs.avatarDataUrl || "");
+  userNickname = prefs.userNickname || "";
+  userAvatarDataUrl = prefs.userAvatarDataUrl || "";
+  if (elSettingsUserNicknameInput) elSettingsUserNicknameInput.value = userNickname;
+  if (elSettingsUserAvatarImg && userAvatarDataUrl) {
+    elSettingsUserAvatarImg.src = userAvatarDataUrl;
+    elSettingsUserAvatarImg.style.display = "block";
+    if (elSettingsUserAvatarFallback) elSettingsUserAvatarFallback.style.display = "none";
+  }
   keepSessionOnClose = prefs.keepSessionOnClose !== false;
   if (elSettingsKeepSession) elSettingsKeepSession.checked = keepSessionOnClose;
   autoRecommendPlay = prefs.autoRecommendPlay !== false;

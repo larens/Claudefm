@@ -216,6 +216,37 @@
                 <button class="settingsBtn" id="settingsDjNameSave" data-i18n="保存">保存</button>
               </div>
             </div>
+            <div class="settingsRow">
+              <div class="settingsLabel" data-i18n="DJ 头像">DJ 头像</div>
+              <div class="settingsInline">
+                <div class="settingsAvatarPreview" id="settingsDjAvatarPreview">
+                  <div class="avatarFallback" id="settingsDjAvatarFallback">DJ</div>
+                  <img class="avatarImg" id="settingsDjAvatarImg" alt="" />
+                </div>
+                <button class="settingsBtn" id="settingsDjAvatarUpload" data-i18n="更换头像">更换头像</button>
+                <input id="settingsDjAvatarFile" type="file" accept="image/*" hidden />
+              </div>
+            </div>
+            <div class="settingsDivider"></div>
+            <div class="settingsSectionTitle" data-i18n="个人设置">个人设置</div>
+            <div class="settingsRow">
+              <div class="settingsLabel" data-i18n="我的称呼">我的称呼</div>
+              <div class="settingsInline">
+                <input class="settingsInput" id="settingsUserNicknameInput" maxlength="8" placeholder="你的昵称" data-i18n-placeholder="你的昵称" />
+                <button class="settingsBtn" id="settingsUserNicknameSave" data-i18n="保存">保存</button>
+              </div>
+            </div>
+            <div class="settingsRow">
+              <div class="settingsLabel" data-i18n="我的头像">我的头像</div>
+              <div class="settingsInline">
+                <div class="settingsAvatarPreview" id="settingsUserAvatarPreview">
+                  <div class="avatarFallback" id="settingsUserAvatarFallback">U</div>
+                  <img class="avatarImg" id="settingsUserAvatarImg" alt="" />
+                </div>
+                <button class="settingsBtn" id="settingsUserAvatarUpload" data-i18n="更换头像">更换头像</button>
+                <input id="settingsUserAvatarFile" type="file" accept="image/*" hidden />
+              </div>
+            </div>
           <div class="settingsRow">
             <div class="settingsLabel" data-i18n="收起侧边栏保留会话">收起侧边栏保留会话</div>
             <div class="settingsInline">

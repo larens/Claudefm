@@ -2,12 +2,13 @@
 
 English · [中文](./README.md)
 
-Claudefm is a Chromium Side Panel extension that turns chat, playlist recommendations, and autoplay into a local-first DJ-style music assistant.
+Claudefm is a Chromium Side Panel extension that turns DJ chat, playlist recommendations, and autoplay into a local-first music assistant.
 
-- Chat and recommendations: via Native Messaging to your local Claude Code CLI
-- Local data: stored by the host on disk, while extension state stays in `chrome.storage.local`
+- Chat and recommendations via Native Messaging to your local Claude Code CLI
+- Local data stored by the host on disk; extension state in `chrome.storage.local`
 
 <img src="https://github.com/larens/Claudefm/blob/main/docs/superpowers/specs/demo.png?raw=true" alt="Demo">
+
 
 ## Repo Layout
 
@@ -17,17 +18,19 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 
 ## Features
 
-- **Top player bar**: playback controls (prev / play / next / progress) integrated into the header; queue button expands the current playlist drawer downward
-- **Wave animation**: a flowing sound-wave visualizer displayed above the player, animating in real time
 - Instant chat feedback with semantic confirmation before recommending playlists
-- Read-only recommendation card ("新歌单推荐") with push-to-play (configurable autoplay or manual confirmation)
-- Like/Dislike loop that affects future recommendations
-- History playback list with detail view
-- Local track and cover cache
-- **TTS synthesis**: supports MiMo TTS with Claude TTS model fallback; DJ segue audio is pre-generated before queue push and served via a local HTTP server for fast playback
-- **Document-to-Podcast**: send a URL or document text and the AI auto-splits it into multi-chapter podcast segments with TTS playback; chapter titles display as `(1/3) Topic Name`, progress bar syncs in real time, and chapters play continuously one after another
+- Read-only recommendation card with push-to-play (configurable autoplay or manual confirmation)
+- Like/Dislike loop that affects future recommendations and filtering
+- History playlist with detail view, local track and cover cache
+- **TTS synthesis**: supports MiMo TTS and Claude TTS model fallback; DJ segue audio is pre-generated and cached, served via a local HTTP server for fast playback
+- **Document-to-Podcast**: send a URL or document text and the AI auto-splits it into multi-chapter podcast segments with TTS playback; chapter titles display as `(1/3) Topic Name`, progress bar syncs in real time, and chapters play continuously
 - **Silent URL fetching**: web page content is fetched via direct HTTP request first (no visible tab); falls back to WebBridge browser rendering when content is insufficient
 - **Playback mutex**: music recommendations do not interrupt an active podcast — recommendations are display-only during podcast playback; the podcast automatically takes over the play queue when started
+- **Optimized DJ segue**: recommendation text focuses on emotion and atmosphere, no song or artist names embedded; split into multiple message bubbles by sentence segments, with per-character karaoke-style highlight synced to TTS playback progress
+- **Persistent chat history**: recommendation text stays in the conversation until a new session is started
+- **Chat avatars**: DJ avatar on the left side of assistant messages, user avatar on the right side of user messages, creating a radio-host conversation feel
+- **Personal settings**: set "My name" and "My avatar"; DJ avatar and name are also customizable from the settings panel
+- **Overlay masking**: settings, Soul, and history panels use a dark overlay that fully covers chat content, preventing text bleed-through
 - Soul panel backed by a local music memory file
 - Local AI tool auto-detection and invocation (Claude Code, etc.)
 - Background playback: music continues playing after Side Panel is closed
@@ -142,6 +145,9 @@ Click the gear icon in the top-right corner of the side panel to open settings:
 | Setting | Description |
 |---------|-------------|
 | DJ Name | Customize the DJ persona name (max 8 chars) |
+| DJ Avatar | Change the DJ avatar image, shown beside assistant messages |
+| My Name | Set your display nickname (max 8 chars) |
+| My Avatar | Upload your avatar, shown beside your messages |
 | Keep session on close | Preserve chat history when side panel is closed |
 | DJ auto-play | When ON, DJ recommendations play immediately; when OFF, shows confirm buttons before playing |
 | NCM API Base URL | NeteaseCloudMusicApi service address, defaults to `http://localhost:3000` |

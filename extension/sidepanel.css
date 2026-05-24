@@ -95,9 +95,10 @@ body {
 .memoryPanel {
   position: fixed;
   inset: 0;
+  z-index: 100;
   display: flex;
   justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.55);
 }
 
 .memoryCard {
@@ -254,6 +255,30 @@ body {
 
 .settingsBtn:hover {
   background: var(--surfaceHover);
+}
+
+.settingsAvatarPreview {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--borderSoft);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.settingsAvatarPreview .avatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+}
+
+.settingsAvatarPreview .avatarFallback {
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .settingsSelect {
@@ -632,7 +657,6 @@ button:hover {
 }
 
 .msg.user {
-  align-self: flex-end;
   background: rgba(122, 92, 255, 0.18);
   border: 1px solid rgba(122, 92, 255, 0.28);
 }
@@ -655,6 +679,46 @@ button:hover {
 .segue-msg.segue-hidden {
   display: none;
 }
+
+/* Message rows with avatars */
+.msgRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 96%;
+}
+.msgRow.assistant {
+  align-self: flex-start;
+}
+.msgRow.user {
+  align-self: flex-end;
+  flex-direction: row;
+}
+.msgRow.segue-hidden {
+  display: none;
+}
+
+.chatAvatar {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--borderSoft);
+}
+.chatAvatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+}
+
+/* User avatar — no extra margins needed, gap from .msgRow handles spacing */
 
 .recommendCard {
   align-self: flex-start;
@@ -703,6 +767,7 @@ button:hover {
   opacity: 0.75;
 }
 
+.app.overlay-active .msgRow:has(.msg.assistant.pending),
 .app.overlay-active .msg.assistant.pending,
 .app.overlay-active .recommendCard {
   display: none;
