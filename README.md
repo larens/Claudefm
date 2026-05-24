@@ -45,9 +45,10 @@ Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + �
 │ extension/background.js   │         │ 127.0.0.1:<random-port>/tts/   │
 └──────────┬─────────────────┘         └────────────────────────────────┘
            │
-           │ Provider Tab / Fetch
+           │ Fetch (cloudsearch + song/url)
            ▼
-      https://api.jamendo.com/*           Claudefm data dir
+      http://localhost:3000/*             Claudefm data dir
+      (NeteaseCloudMusicApi)
 
   文档转播客 URL 抓取优先级：
   1. 直接 HTTP fetch（静默，无弹窗）
@@ -62,6 +63,7 @@ Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + �
 - Node.js `>=18`（推荐）
 - Python 3（可选，Node.js 不可用时回退使用）
 - Claude Code CLI 可执行，命令为 `claude`
+- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 本地服务（音乐音源）
 
 ### 1. 加载扩展
 
@@ -87,7 +89,26 @@ node host/install.mjs --extensionId <ID>
 - 生成 `music.md`、`list.md`
 - 创建 `cache/`、`cache/tracks/`、`cache/covers/`、`cache/tts/`
 
-### 3. 配置 TTS（推荐语语音）
+### 3. 启动音乐源（NeteaseCloudMusicApi）
+
+音乐播放依赖本地运行的 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 服务。安装并启动：
+
+```bash
+# 安装（方式一：npm 全局模块）
+mkdir NeteaseCloudMusicApi && cd NeteaseCloudMusicApi
+npm init -y && npm install NeteaseCloudMusicApi
+node -e "require('NeteaseCloudMusicApi').serveNcmApi({port:3000,checkVersion:false})"
+
+# 或安装（方式二：克隆仓库后运行）
+git clone https://github.com/Binaryify/NeteaseCloudMusicApi.git
+cd NeteaseCloudMusicApi && npm install && node app.js
+```
+
+服务默认运行在 `http://localhost:3000`。启动后无需额外配置，扩展会自动连接。
+
+> 原始仓库可能因版权原因归档，可搜索社区活跃 fork 替代。也可通过 npm 直接安装 `NeteaseCloudMusicApi` 包。
+
+### 4. 配置 TTS（推荐语语音）
 
 DJ 推荐语需要 TTS 服务转换为语音。配置好 MiMo TTS 后，推荐语才能以语音形式播放。
 
@@ -108,7 +129,7 @@ DJ 推荐语需要 TTS 服务转换为语音。配置好 MiMo TTS 后，推荐�
 
 > `api_key` 为空时 MiMo TTS 不会启用，Host 将尝试 Claude TTS 模型回退。
 
-### 4. 打开侧栏
+### 5. 打开侧栏
 
 点击扩展图标，打开 Side Panel → Claudefm。
 
@@ -121,6 +142,7 @@ DJ 推荐语需要 TTS 服务转换为语音。配置好 MiMo TTS 后，推荐�
 | DJ 名称 | 自定义 DJ 角色名称（最多 8 字） |
 | 收起侧边栏保留会话 | 关闭侧栏后是否保留对话历史 |
 | DJ 推荐自动播放 | 开启时 DJ 推荐直接播放；关闭时显示确认按钮，手动点击后才播放 |
+| 网易云 API 地址 | NeteaseCloudMusicApi 服务地址，默认 `http://localhost:3000` |
 | 本地 AI 工具 | 自动检测或手动选择本地 AI CLI 工具 |
 
 ## TTS 语音合成
@@ -234,6 +256,11 @@ node host/install.mjs --config host/install-linux.json
 - 找不到 `claude`
 - 确认 Claude Code CLI 已安装，且 `claude` 在 `PATH` 中
 - 或设置环境变量 `CLAUDE_BIN` 指向可执行文件绝对路径
+
+- 歌曲无法播放（音源问题）
+- 确认 NeteaseCloudMusicApi 服务已启动，默认地址 `http://localhost:3000`
+- 在设置面板中检查"网易云 API 地址"是否正确
+- 部分付费歌曲需要登录网易云账号才能获取播放链接；未登录时大部分免费歌曲可正常播放
 
 - DJ 推荐语没有声音
 - 确认 `tts-config.json` 中的 `api_key` 已填写

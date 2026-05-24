@@ -2359,7 +2359,7 @@ readNativeMessageStream(async (msg) => {
       const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
       const djRaw = msg.djName ?? "Claudefm";
       const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudefm";
-      const provider = msg.provider || "paojiao";
+      const provider = msg.provider || "netease";
 
       const scene = await buildWelcomeScene(msg.latitude, msg.longitude, profileSummary, msgLang);
       const prompt = buildPrompt({
@@ -2401,7 +2401,7 @@ readNativeMessageStream(async (msg) => {
       const profileSummary = msg.profileSummary ? String(msg.profileSummary) : "";
       const djRaw = msg.djName ?? "Claudefm";
       const dj = String(djRaw).replace(/\r|\n/g, " ").trim().slice(0, 24) || "Claudefm";
-      const provider = msg.provider || "paojiao";
+      const provider = msg.provider || "netease";
       const likedTracks = Array.isArray(msg.likedTracks) ? msg.likedTracks : [];
       const dislikedTracks = Array.isArray(msg.dislikedTracks) ? msg.dislikedTracks : [];
       const recentTracks = Array.isArray(msg.recentTracks) ? msg.recentTracks : [];

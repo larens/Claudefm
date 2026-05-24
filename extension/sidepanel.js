@@ -68,8 +68,8 @@ const elSettingsDjNameInput = document.getElementById("settingsDjNameInput");
 const elSettingsDjNameSave = document.getElementById("settingsDjNameSave");
 const elSettingsKeepSession = document.getElementById("settingsKeepSession");
 const elSettingsAutoRecommend = document.getElementById("settingsAutoRecommend");
-const elSettingsJamendoClientId = document.getElementById("settingsJamendoClientId");
-const elSettingsJamendoClientIdSave = document.getElementById("settingsJamendoClientIdSave");
+const elSettingsNcmApiBase = document.getElementById("settingsNcmApiBase");
+const elSettingsNcmApiBaseSave = document.getElementById("settingsNcmApiBaseSave");
 
 const elAiToolModeAuto = document.getElementById("aiToolModeAuto");
 const elAiToolModeManual = document.getElementById("aiToolModeManual");
@@ -2270,29 +2270,29 @@ if (elSettingsDjNameInput) {
   });
 }
 
-async function saveJamendoClientIdFromSettings() {
-  if (!elSettingsJamendoClientId) return;
-  const raw = String(elSettingsJamendoClientId.value || "").trim();
+async function saveNcmApiBaseFromSettings() {
+  if (!elSettingsNcmApiBase) return;
+  const raw = String(elSettingsNcmApiBase.value || "").trim() || "http://localhost:3000";
   try {
-    await patchPreferences({ jamendoClientId: raw });
-    setHint(raw ? __t("已保存 Jamendo Client ID") : __t("已清除 Jamendo Client ID"));
+    await patchPreferences({ ncmApiBase: raw });
+    setHint(__t("已保存网易云 API 地址：{0}", {0: raw}));
   } catch (e) {
     const message = e?.message ? String(e.message) : String(e);
     setHint(__t("保存失败：{0}", {0: message}));
   }
 }
 
-if (elSettingsJamendoClientIdSave) {
-  elSettingsJamendoClientIdSave.addEventListener("click", async () => {
-    await saveJamendoClientIdFromSettings();
+if (elSettingsNcmApiBaseSave) {
+  elSettingsNcmApiBaseSave.addEventListener("click", async () => {
+    await saveNcmApiBaseFromSettings();
   });
 }
 
-if (elSettingsJamendoClientId) {
-  elSettingsJamendoClientId.addEventListener("keydown", async (e) => {
+if (elSettingsNcmApiBase) {
+  elSettingsNcmApiBase.addEventListener("keydown", async (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      await saveJamendoClientIdFromSettings();
+      await saveNcmApiBaseFromSettings();
     }
   });
 }
@@ -2324,7 +2324,7 @@ safePost({ type: "ready", lang: __lang });
   if (elSettingsKeepSession) elSettingsKeepSession.checked = keepSessionOnClose;
   autoRecommendPlay = prefs.autoRecommendPlay !== false;
   if (elSettingsAutoRecommend) elSettingsAutoRecommend.checked = autoRecommendPlay;
-  if (elSettingsJamendoClientId) elSettingsJamendoClientId.value = prefs.jamendoClientId || "";
+  if (elSettingsNcmApiBase) elSettingsNcmApiBase.value = prefs.ncmApiBase || "http://localhost:3000";
   localAiToolMode = prefs.localAiToolMode || "auto";
   localAiToolId = prefs.localAiToolId || "";
   if (elAiToolModeAuto) elAiToolModeAuto.checked = localAiToolMode === "auto";
@@ -2359,38 +2359,34 @@ safePost({ type: "ready", lang: __lang });
     const BAR_COUNT = 58;
     const MAX_HEIGHT = 120;
     const MIN_HEIGHT = 3;
-    const FLOW_SPEED = 170;
-    const CENTER_WEIGHT = 0.7;
-    const WAVE_RAND_RANGE = 0.85;
     const bars = [];
-    const waveData = [];
     for (let i = 0; i < BAR_COUNT; i++) {
       const el = document.createElement("div");
       el.className = "bar";
       wrap.appendChild(el);
       bars.push(el);
-      waveData.push(MIN_HEIGHT);
     }
-    function getVoiceHeight(pos) {
-      const mid = BAR_COUNT / 2;
-      const dist = Math.abs(pos - mid) / mid;
-      const envelope = 1 - dist * CENTER_WEIGHT;
-      let base = 0.2 + Math.random() * WAVE_RAND_RANGE;
-      let h = MAX_HEIGHT * base * envelope;
-      return Math.max(MIN_HEIGHT, h);
-    }
-    function flowWave() {
-      for (let i = 0; i < BAR_COUNT - 1; i++) {
-        waveData[i] = waveData[i + 1] * 0.88;
-      }
-      waveData[BAR_COUNT - 1] = getVoiceHeight(BAR_COUNT - 1);
+
+    const PI2 = Math.PI * 2;
+    const BASE = 0.35;
+    const RANGE = 0.65;
+    let t = 0;
+    function animate() {
+      t += 0.04;
+      const breathe = 0.85 + 0.15 * Math.sin(t * 0.6);
       for (let i = 0; i < BAR_COUNT; i++) {
-        if (Math.random() > 0.65) {
-          waveData[i] = getVoiceHeight(i);
-        }
-        bars[i].style.height = waveData[i] + "px";
+        const nx = i / (BAR_COUNT - 1);
+        const envelope = Math.sin(nx * Math.PI);
+        const v = Math.sin(nx * 2.7 * PI2 - t * 2.2)
+                + Math.sin(nx * 4.3 * PI2 + t * 1.5) * 0.35
+                + Math.sin(nx * 1.6 * PI2 - t * 3.0) * 0.5
+                + Math.sin(nx * 6.1 * PI2 + t * 0.9) * 0.12;
+        const norm = (v + 0.97) / 1.94;
+        const h = MIN_HEIGHT + (MAX_HEIGHT - MIN_HEIGHT) * (BASE + RANGE * norm * envelope) * breathe;
+        bars[i].style.height = Math.max(MIN_HEIGHT, h) + "px";
       }
+      requestAnimationFrame(animate);
     }
-    setInterval(flowWave, FLOW_SPEED);
+    animate();
   }
 }

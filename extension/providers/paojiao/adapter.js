@@ -30,57 +30,65 @@ function scoreResolvedTrack(query, candidate) {
 async function resolveTrack(track) {
   const name = String(track?.name || track?.query || "").trim();
   const artist = String(track?.artist || "").trim();
-  console.log("[jamendo adapter] resolveTrack", { name, artist });
+  console.log("[ncm adapter] resolveTrack", { name, artist });
   if (!name) return null;
 
   try {
     const { preferences } = await chrome.storage.local.get("preferences");
-    const clientId = preferences?.jamendoClientId || "";
-    if (!clientId) {
-      console.warn("[jamendo adapter] client_id not configured");
-      return null;
-    }
+    const ncmBase = (preferences?.ncmApiBase || "http://localhost:3000").replace(/\/+$/, "");
 
     const query = [name, artist].filter(Boolean).join(" ");
-    const searchUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${encodeURIComponent(clientId)}&format=json&limit=10&search=${encodeURIComponent(query)}&include=musicinfo&audioformat=mp31&order=popularity_total`;
-    console.log("[jamendo adapter] search URL", searchUrl);
+    const searchUrl = `${ncmBase}/cloudsearch?keywords=${encodeURIComponent(query)}&limit=10&type=1`;
+    console.log("[ncm adapter] search URL", searchUrl);
 
     const resp = await fetch(searchUrl);
-    if (!resp.ok) { console.log("[jamendo adapter] search failed", resp.status); return null; }
+    if (!resp.ok) { console.log("[ncm adapter] search failed", resp.status); return null; }
     const data = await resp.json();
-    if (data.headers?.status !== "success" || !data.results?.length) { console.log("[jamendo adapter] no results"); return null; }
+    const songs = data?.result?.songs;
+    if (!songs?.length) { console.log("[ncm adapter] no results"); return null; }
 
     let bestResult = null;
     let bestScore = -1;
+    let bestSongId = null;
 
-    for (const t of data.results) {
-      const candidate = { name: t.name || "", artist: t.artist_name || "" };
+    for (const s of songs) {
+      const candidateName = s.name || "";
+      const candidateArtist = (s.ar || []).map((a) => a.name).join(", ");
+      const candidate = { name: candidateName, artist: candidateArtist };
       const score = scoreResolvedTrack({ name, artist }, candidate);
-      console.log("[jamendo adapter] match", {
-        jamendoId: t.id,
+      console.log("[ncm adapter] match", {
+        ncmId: s.id,
         score,
-        streamUrl: t.audio,
-        resolvedName: candidate.name,
-        resolvedArtist: candidate.artist,
+        resolvedName: candidateName,
+        resolvedArtist: candidateArtist,
       });
 
       if (score > bestScore) {
         bestScore = score;
+        bestSongId = s.id;
         bestResult = {
-          provider: "jamendo",
+          provider: "netease",
           track: candidate,
-          streamUrl: t.audio || "",
-          cover: t.image || "",
-          durationMs: (t.duration || 0) * 1000,
+          durationMs: s.dt || 0,
+          cover: s.al?.picUrl || "",
         };
       }
 
       if (score >= 18) break;
     }
 
-    return bestResult?.streamUrl ? bestResult : null;
+    if (!bestSongId) return null;
+
+    const urlResp = await fetch(`${ncmBase}/song/url?id=${bestSongId}`);
+    if (!urlResp.ok) { console.log("[ncm adapter] song url failed", urlResp.status); return null; }
+    const urlData = await urlResp.json();
+    const songUrl = urlData?.data?.[0]?.url;
+    if (!songUrl) { console.warn("[ncm adapter] song url empty (may need login)", { bestSongId }); return null; }
+
+    bestResult.streamUrl = songUrl;
+    return bestResult;
   } catch (e) {
-    console.error("[jamendo adapter] error", e);
+    console.error("[ncm adapter] error", e);
     return null;
   }
 }
@@ -91,7 +99,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   resolveTrack(msg.track)
     .then((result) => sendResponse(result ?? null))
     .catch((error) => {
-      console.error("[jamendo adapter] message resolve failed", error);
+      console.error("[ncm adapter] message resolve failed", error);
       sendResponse(null);
     });
 

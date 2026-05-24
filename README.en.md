@@ -47,9 +47,10 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 │ extension/background.js   │         │ 127.0.0.1:<random-port>/tts/   │
 └──────────┬─────────────────┘         └────────────────────────────────┘
            │
-           │ Provider Tab / Fetch
+           │ Fetch (cloudsearch + song/url)
            ▼
-      https://api.jamendo.com/*           Claudefm data dir
+      http://localhost:3000/*             Claudefm data dir
+      (NeteaseCloudMusicApi)
 
   Podcast URL fetch priority:
   1. Direct HTTP fetch (silent, no visible tab)
@@ -64,6 +65,7 @@ Claudefm is a Chromium Side Panel extension that turns chat, playlist recommenda
 - Node.js `>=18` (recommended)
 - Python 3 (optional, fallback when Node.js is unavailable)
 - Claude Code CLI available as `claude`
+- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) local service (music source)
 
 ### 1. Load The Extension
 
@@ -89,7 +91,26 @@ The installer will automatically:
 - Create `music.md` and `list.md`
 - Create `cache/`, `cache/tracks/`, `cache/covers/`, and `cache/tts/`
 
-### 3. Configure TTS (DJ Voice)
+### 3. Start Music Source (NeteaseCloudMusicApi)
+
+Music playback depends on a locally running [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) service. Install and start it:
+
+```bash
+# Option A: install via npm
+mkdir NeteaseCloudMusicApi && cd NeteaseCloudMusicApi
+npm init -y && npm install NeteaseCloudMusicApi
+node -e "require('NeteaseCloudMusicApi').serveNcmApi({port:3000,checkVersion:false})"
+
+# Option B: clone the repo
+git clone https://github.com/Binaryify/NeteaseCloudMusicApi.git
+cd NeteaseCloudMusicApi && npm install && node app.js
+```
+
+The service runs on `http://localhost:3000` by default. No additional configuration is needed — the extension connects automatically.
+
+> The original repository may be archived due to copyright reasons. Search for active community forks or install the `NeteaseCloudMusicApi` npm package directly.
+
+### 4. Configure TTS (DJ Voice)
 
 DJ recommendation speech requires a TTS service. Configure MiMo TTS to enable voice playback.
 
@@ -110,7 +131,7 @@ Only `api_key` is required; all other fields use sensible defaults. Restart the 
 
 > When `api_key` is empty, MiMo TTS is skipped and the host falls back to Claude TTS models.
 
-### 4. Open The Side Panel
+### 5. Open The Side Panel
 
 Click the extension icon and open Side Panel → Claudefm.
 
@@ -123,6 +144,7 @@ Click the gear icon in the top-right corner of the side panel to open settings:
 | DJ Name | Customize the DJ persona name (max 8 chars) |
 | Keep session on close | Preserve chat history when side panel is closed |
 | DJ auto-play | When ON, DJ recommendations play immediately; when OFF, shows confirm buttons before playing |
+| NCM API Base URL | NeteaseCloudMusicApi service address, defaults to `http://localhost:3000` |
 | Local AI Tool | Auto-detect or manually select a local AI CLI tool |
 
 ## TTS Voice Synthesis
@@ -236,6 +258,11 @@ Typical contents:
 - `claude` not found
 - Install Claude Code CLI and ensure `claude` is available in `PATH`
 - Or set `CLAUDE_BIN` to the absolute executable path
+
+- Songs won't play (music source issue)
+- Confirm NeteaseCloudMusicApi is running, default address `http://localhost:3000`
+- Check "NCM API Base URL" in settings matches your service address
+- Some premium songs require a NetEase Cloud Music account to get playback URLs; most free songs work without login
 
 - DJ recommendation speech has no sound
 - Confirm `api_key` is set in `tts-config.json`

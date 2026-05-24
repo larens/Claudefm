@@ -33,6 +33,7 @@
     "geolocation"
   ],
   "host_permissions": [
-    "https://api.jamendo.com/*"
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
   ]
 }

@@ -894,7 +894,7 @@ button:hover {
   height: 3px;
   background: color-mix(in srgb, CanvasText 20%, Canvas 85%);
   border-radius: 2px;
-  transition: height 0.3s ease;
+  transition: height 0.25s ease;
   will-change: height;
 }
 

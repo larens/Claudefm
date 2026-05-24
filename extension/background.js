@@ -212,61 +212,75 @@ function scoreResolvedTrack(query, candidate) {
 
 async function resolveTrackViaFetch(track) {
   const { name, artist } = normalizeTrackQuery(track);
-  const prefs = await getPreferences();
-  const clientId = prefs.jamendoClientId || "";
-  if (!clientId) {
-    console.warn("[background] Jamendo client_id not configured");
-    return null;
-  }
-
   const query = [name, artist].filter(Boolean).join(" ");
   if (!query) return null;
 
+  const prefs = await getPreferences();
+  const ncmBase = (prefs.ncmApiBase || "http://localhost:3000").replace(/\/+$/, "");
+
   try {
-    const searchUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${encodeURIComponent(clientId)}&format=json&limit=10&search=${encodeURIComponent(query)}&include=musicinfo&audioformat=mp31&order=popularity_total`;
-    console.log("[background] resolveTrackViaFetch Jamendo search", { name, artist });
+    const searchUrl = `${ncmBase}/cloudsearch?keywords=${encodeURIComponent(query)}&limit=10&type=1`;
+    console.log("[background] resolveTrackViaFetch NCM search", { name, artist });
 
     const resp = await fetch(searchUrl);
     if (!resp.ok) {
-      console.warn("[background] Jamendo search failed", resp.status, { name, artist });
+      console.warn("[background] NCM search failed", resp.status, { name, artist });
       return null;
     }
 
     const data = await resp.json();
-    if (data.headers?.status !== "success" || !data.results?.length) {
-      console.warn("[background] Jamendo no results", { name, artist });
+    const songs = data?.result?.songs;
+    if (!songs?.length) {
+      console.warn("[background] NCM no results", { name, artist });
       return null;
     }
 
     let bestResult = null;
     let bestScore = -1;
+    let bestSongId = null;
 
-    for (const t of data.results) {
-      const candidate = { name: t.name || "", artist: t.artist_name || "" };
+    for (const s of songs) {
+      const candidateName = s.name || "";
+      const candidateArtist = (s.ar || []).map((a) => a.name).join(", ");
+      const candidate = { name: candidateName, artist: candidateArtist };
       const score = scoreResolvedTrack({ name, artist }, candidate);
-      console.log("[background] resolveTrackViaFetch Jamendo match", {
-        jamendoId: t.id,
+      console.log("[background] resolveTrackViaFetch NCM match", {
+        ncmId: s.id,
         score,
-        streamUrl: t.audio,
-        resolvedName: candidate.name,
-        resolvedArtist: candidate.artist,
+        resolvedName: candidateName,
+        resolvedArtist: candidateArtist,
       });
 
       if (score > bestScore) {
         bestScore = score;
+        bestSongId = s.id;
         bestResult = {
-          provider: "jamendo",
+          provider: "netease",
           track: candidate,
-          streamUrl: t.audio || "",
-          cover: t.image || "",
-          durationMs: (t.duration || 0) * 1000,
+          durationMs: s.dt || 0,
+          cover: s.al?.picUrl || "",
         };
       }
 
       if (score >= 18) break;
     }
 
-    return bestResult?.streamUrl ? bestResult : null;
+    if (!bestSongId) return null;
+
+    const urlResp = await fetch(`${ncmBase}/song/url?id=${bestSongId}`);
+    if (!urlResp.ok) {
+      console.warn("[background] NCM song url failed", urlResp.status);
+      return null;
+    }
+    const urlData = await urlResp.json();
+    const songUrl = urlData?.data?.[0]?.url;
+    if (!songUrl) {
+      console.warn("[background] NCM song url empty (may need login)", { bestSongId });
+      return null;
+    }
+
+    bestResult.streamUrl = songUrl;
+    return bestResult;
   } catch (error) {
     console.error("[background] resolveTrackViaFetch error", error, { name, artist });
     return null;
@@ -290,14 +304,6 @@ async function validateStreamUrl(url) {
 }
 
 async function resolveTrackWithFallback(track) {
-  try {
-    const prefs = await getPreferences();
-    if (!prefs.jamendoClientId) {
-      console.warn("[background] Jamendo client_id not configured, skipping resolution");
-      return null;
-    }
-  } catch {}
-
   try {
     const query = normalizeTrackQuery(track);
     if (query?.name && query?.artist) {
@@ -388,7 +394,7 @@ async function onChat(text, options = {}) {
     text,
     lang: currentLang,
     djName: prefs.djName ?? "Claudefm",
-    provider: "jamendo",
+    provider: "netease",
     profileSummary: profileSummary ?? "",
     turnCountSinceLastProfileRefresh: nextTurnCount % 3,
     forceProfileRefresh: nextTurnCount % 3 === 0,
@@ -625,7 +631,7 @@ async function maybeWelcome(port) {
       type: "welcome",
       lang: currentLang,
       djName: prefs.djName ?? "Claudefm",
-      provider: "jamendo",
+      provider: "netease",
       profileSummary: profileSummary ?? "",
       templatePath: MEMORY_TEMPLATE_PATH,
       latitude: hasCoords ? lat : null,
@@ -827,7 +833,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             lang: currentLang,
             recentTracks: msg.recentTracks || [],
             djName: prefs.djName ?? "Claudefm",
-            provider: "jamendo",
+            provider: "netease",
             profileSummary: profileSummary ?? "",
             likedTracks: likedTracks.slice(0, 20),
             dislikedTracks: dislikedTracks.slice(0, 20),
