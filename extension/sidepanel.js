@@ -100,7 +100,6 @@ let segueSpokenInQueue = 0;
 let seeking = false;
 let hintTimer = null;
 let recognizing = false;
-let recognition = null;
 let djName = "Claudefm";
 let preloadIndex = -1;
 let preloadStatus = "idle";
@@ -117,6 +116,12 @@ let aiProvider = "local";
 
 let speechActive = false;
 let speechPaused = false;
+
+let activeSegueSegments = [];
+let activeSegueSegmentIdx = -1;
+let activeSegueLastCharIdx = -1;
+let segueHighlightTimer = null;
+let segueHighlightStart = 0;
 
 const SESSION_KEY = "sidepanelSessionV1";
 let keepSessionOnClose = true;
@@ -219,29 +224,18 @@ function applyPlayerState(state) {
   }
   setPlayingUI(playerPlaying);
   if (elInterruptHint) elInterruptHint.hidden = !interrupted;
+  if (speechActive && activeSegueSegments.length) {
+    if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
+    applySegueProgress(playerCurrentTime, playerDuration);
+  } else if (!speechActive && activeSegueSegments.length && !segueHighlightTimer) {
+    clearActiveSegue();
+  }
   renderQueue();
 }
 
 async function requestPlayerState() {
   const response = await sendPlayerCommand("player.getState");
   if (response?.state) applyPlayerState(response.state);
-}
-
-async function ensureMicPermission() {
-  if (!navigator.mediaDevices?.getUserMedia) return true;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-    return true;
-  } catch (e) {
-    const name = e?.name ? String(e.name) : "";
-    if (name === "NotAllowedError" || name === "SecurityError") {
-      setHint(__t("麦克风权限被拒绝，请在系统与浏览器中允许 Chrome 使用麦克风后重试"));
-    } else {
-      setHint(__t("无法获取麦克风，请检查系统/浏览器麦克风权限"));
-    }
-    return false;
-  }
 }
 
 function formatTime(seconds) {
@@ -401,6 +395,111 @@ function appendMessageDom(role, text) {
 function appendChatNode(node) {
   elChat.appendChild(node);
   elChat.scrollTop = elChat.scrollHeight;
+}
+
+function splitSegueSegments(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const sentences = raw.split(/(?<=[。！？!?；;])/);
+  const segments = [];
+  let buf = "";
+  for (const s of sentences) {
+    if (!s.trim()) continue;
+    if (buf.length > 0 && buf.length + s.length > 80) {
+      segments.push(buf.trim());
+      buf = "";
+    }
+    buf += s;
+  }
+  if (buf.trim()) segments.push(buf.trim());
+  return segments;
+}
+
+function appendSegueMessage(text) {
+  clearActiveSegue();
+  const parts = splitSegueSegments(text);
+  if (!parts.length) return;
+  const totalChars = [...text.replace(/\s/g, "")].length;
+  parts.forEach((segText, idx) => {
+    const div = document.createElement("div");
+    div.className = "msg assistant segue-msg" + (idx > 0 ? " segue-hidden" : "");
+    const chars = [...segText];
+    chars.forEach((ch) => {
+      const span = document.createElement("span");
+      span.className = "segue-char";
+      span.textContent = ch;
+      div.appendChild(span);
+    });
+    elChat.appendChild(div);
+    activeSegueSegments.push({ el: div, chars: Array.from(div.querySelectorAll(".segue-char")) });
+  });
+  elChat.scrollTop = elChat.scrollHeight;
+  activeSegueSegmentIdx = 0;
+  activeSegueLastCharIdx = -1;
+  startFallbackHighlight(totalChars);
+}
+
+function startFallbackHighlight(totalChars) {
+  if (segueHighlightTimer) clearInterval(segueHighlightTimer);
+  const estDuration = totalChars / 4;
+  segueHighlightStart = Date.now();
+  segueHighlightTimer = setInterval(() => {
+    if (!activeSegueSegments.length) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; return; }
+    const elapsed = (Date.now() - segueHighlightStart) / 1000;
+    if (elapsed >= estDuration * 1.1) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; return; }
+    applySegueProgress(elapsed, estDuration);
+  }, 120);
+}
+
+function applySegueProgress(currentTime, duration) {
+  if (!activeSegueSegments.length || duration <= 0) return;
+  const totalChars = activeSegueSegments.reduce((s, seg) => s + seg.chars.length, 0);
+  let charPos = Math.min(Math.floor((currentTime / duration) * totalChars), totalChars - 1);
+  let segIdx = 0;
+  let offset = 0;
+  for (let i = 0; i < activeSegueSegments.length; i++) {
+    const len = activeSegueSegments[i].chars.length;
+    if (charPos < offset + len) { segIdx = i; break; }
+    offset += len;
+    if (i === activeSegueSegments.length - 1) segIdx = i;
+  }
+  const charInSeg = charPos - offset;
+  if (segIdx === activeSegueSegmentIdx && charInSeg === activeSegueLastCharIdx) return;
+  activeSegueSegmentIdx = segIdx;
+  activeSegueLastCharIdx = charInSeg;
+  activeSegueSegments.forEach((seg, i) => {
+    if (i > segIdx) {
+      seg.el.classList.add("segue-hidden");
+    } else {
+      seg.el.classList.remove("segue-hidden");
+      seg.chars.forEach((c, ci) => {
+        if (i < segIdx) c.classList.add("segue-read");
+        else c.classList.toggle("segue-read", ci <= charInSeg);
+      });
+    }
+  });
+  const activeSeg = activeSegueSegments[segIdx];
+  if (activeSeg) {
+    const cursor = activeSeg.chars[charInSeg];
+    if (cursor) {
+      const cr = activeSeg.el.getBoundingClientRect();
+      const sr = cursor.getBoundingClientRect();
+      if (sr.top < cr.top || sr.bottom > cr.bottom) {
+        cursor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }
+  }
+}
+
+function clearActiveSegue() {
+  if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
+  activeSegueSegments.forEach((seg) => {
+    seg.chars.forEach((c) => c.classList.remove("segue-read"));
+    seg.el.remove();
+  });
+  activeSegueSegments = [];
+  activeSegueSegmentIdx = -1;
+  activeSegueLastCharIdx = -1;
 }
 
 function clearRecommendCard() {
@@ -1640,9 +1739,15 @@ async function handleAssistantResult(result) {
     return;
   }
 
-  const parts = [];
-  if (result.say) parts.push(result.say);
-  if (parts.length) appendMessage("assistant", parts.join("\n\n"));
+  const hasTracks = Array.isArray(result.play) && result.play.length > 0;
+  const segueText = result.segue ? String(result.segue).trim() : "";
+
+  // Skip say when segue + tracks exist (segue handles spoken content via TTS)
+  if (!hasTracks || !segueText) {
+    const parts = [];
+    if (result.say) parts.push(result.say);
+    if (parts.length) appendMessage("assistant", parts.join("\n\n"));
+  }
 
   if (result.confirmRecommend) {
     const q = result.confirmQuestion ? String(result.confirmQuestion).trim() : "";
@@ -1650,10 +1755,8 @@ async function handleAssistantResult(result) {
     return;
   }
 
-  const hasTracks = Array.isArray(result.play) && result.play.length > 0;
   if (hasTracks) {
-    const segueText = result.segue ? String(result.segue).trim() : "";
-    if (segueText) appendMessage("assistant", segueText);
+    if (segueText) appendSegueMessage(segueText);
     const playListMessage = buildPlayListMessage(result.play);
     if (playListMessage) appendMessage("assistant", playListMessage);
     if (podcastActive) {
@@ -1736,6 +1839,8 @@ port.onMessage.addListener(async (msg) => {
     // Skip result.say — greeting was already shown in the initial chatResult
     const result = msg.result;
     if (result && typeof result === "object") {
+      const segueText = result.segue ? String(result.segue).trim() : "";
+      if (segueText) appendSegueMessage(segueText);
       const playListMessage = buildPlayListMessage(result.play);
       if (playListMessage) appendMessage("assistant", playListMessage);
     }
@@ -1749,6 +1854,38 @@ port.onMessage.addListener(async (msg) => {
     const message = msg.error ? String(msg.error) : __t("未知错误");
     if (msg.context) setHint(`${msg.context}: ${message}`);
     else setHint(__t("播放异常：{0}", {0: message}));
+    return;
+  }
+  if (msg.type === "speechRecognition.result") {
+    const kind = msg.kind || "";
+    if (kind === "result") {
+      const text = msg.text ? String(msg.text).trim() : "";
+      if (text) {
+        const prev = (elInput.value ?? "").replace(/\s+$/g, "");
+        elInput.value = `${prev}${prev ? " " : ""}${text}`;
+        autosizeComposerInput();
+        updateSendState();
+        elInput.focus();
+      }
+    } else if (kind === "error") {
+      const err = msg.error ? String(msg.error) : "unknown";
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        setHint(__t("语音权限被拒绝"));
+      } else if (err === "no-speech") {
+        setHint(__t("未检测到语音"));
+      } else {
+        setHint(__t("语音识别失败：{0}", {0: err}));
+      }
+      recognizing = false;
+      elBtnMic.classList.remove("recording");
+      elBtnMic.setAttribute("aria-pressed", "false");
+      updateSendState();
+    } else if (kind === "ended") {
+      recognizing = false;
+      elBtnMic.classList.remove("recording");
+      elBtnMic.setAttribute("aria-pressed", "false");
+      updateSendState();
+    }
     return;
   }
   if (msg.type === "docToPodcastProgress") {
@@ -1797,9 +1934,7 @@ port.onMessage.addListener(async (msg) => {
 
 elSend.addEventListener("click", async () => {
   if (recognizing) {
-    try {
-      recognition?.stop?.();
-    } catch {}
+    chrome.runtime.sendMessage({ type: "speechRecognition.stop" });
     return;
   }
   if (pendingAssistantEl && pendingAssistantEl.isConnected) {
@@ -1919,76 +2054,16 @@ elProgress.addEventListener("change", () => {
 });
 
 elBtnMic.addEventListener("click", async () => {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    setHint(__t("当前浏览器不支持语音输入"));
-    return;
-  }
-
-  if (!recognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = __lang === "en" ? "en-US" : "zh-CN";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-
-    recognition.addEventListener("result", (event) => {
-      let finalText = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const r = event.results[i];
-        if (r.isFinal) {
-          finalText += (r[0]?.transcript ?? "").trim() + " ";
-        }
-      }
-      finalText = finalText.trim();
-      if (!finalText) return;
-      const prev = (elInput.value ?? "").replace(/\s+$/g, "");
-      elInput.value = `${prev}${prev ? " " : ""}${finalText}`;
-      autosizeComposerInput();
-      updateSendState();
-      elInput.focus();
-    });
-
-    recognition.addEventListener("error", (event) => {
-      const err = event?.error ? String(event.error) : "unknown";
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        setHint(__t("语音权限被拒绝"));
-      } else if (err === "no-speech") {
-        setHint(__t("未检测到语音"));
-      } else {
-        setHint(__t("语音识别失败：{0}", {0: err}));
-      }
-      updateSendState();
-    });
-
-    recognition.addEventListener("end", () => {
-      recognizing = false;
-      elBtnMic.classList.remove("recording");
-      elBtnMic.setAttribute("aria-pressed", "false");
-      updateSendState();
-    });
-  }
-
   if (recognizing) {
-    recognition.stop();
+    chrome.runtime.sendMessage({ type: "speechRecognition.stop" });
     return;
   }
-
-  try {
-    const ok = await ensureMicPermission();
-    if (!ok) return;
-    recognizing = true;
-    elBtnMic.classList.add("recording");
-    elBtnMic.setAttribute("aria-pressed", "true");
-    setHint(__t("正在聆听…"));
-    updateSendState();
-    recognition.start();
-  } catch {
-    recognizing = false;
-    elBtnMic.classList.remove("recording");
-    elBtnMic.setAttribute("aria-pressed", "false");
-    updateSendState();
-    setHint(__t("语音输入启动失败"));
-  }
+  recognizing = true;
+  elBtnMic.classList.add("recording");
+  elBtnMic.setAttribute("aria-pressed", "true");
+  setHint(__t("正在聆听…"));
+  updateSendState();
+  chrome.runtime.sendMessage({ type: "speechRecognition.start" });
 });
 
 if (elBtnSoul && elSoulPanel) {

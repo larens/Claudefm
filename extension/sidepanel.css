@@ -643,6 +643,19 @@ button:hover {
   border: 1px solid var(--borderSoft);
 }
 
+.segue-msg .segue-char {
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+  opacity: 0.45;
+  border-radius: 2px;
+}
+.segue-msg .segue-char.segue-read {
+  opacity: 1;
+  background-color: rgba(122, 92, 255, 0.18);
+}
+.segue-msg.segue-hidden {
+  display: none;
+}
+
 .recommendCard {
   align-self: flex-start;
   width: 100%;

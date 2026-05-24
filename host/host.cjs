@@ -455,7 +455,13 @@ function validateMimoResult(obj, lang) {
       .map((m) => ({ type: typeof m.type === "string" && m.type.trim() ? m.type.trim() : "taste", text: m.text.trim() }));
   }
   const result = { say, play, memory };
-  if (typeof obj.segue === "string" && obj.segue.trim()) result.segue = obj.segue.trim();
+  if (typeof obj.segue === "string" && obj.segue.trim()) {
+    result.segue = obj.segue.trim();
+  } else if (play.length > 0) {
+    result.segue = lang === "en"
+      ? "Here's a little something for you. Let the music carry you away."
+      : "接下来，给你准备了几首歌。让音乐带你去一个好地方吧。";
+  }
   if (typeof obj.confirmRecommend === "boolean") result.confirmRecommend = obj.confirmRecommend;
   if (typeof obj.confirmQuestion === "string" && obj.confirmQuestion.trim()) result.confirmQuestion = obj.confirmQuestion.trim();
   return result;
@@ -486,7 +492,7 @@ function buildSchema() {
           required: ["name", "artist"]
         }
       },
-      segue: { type: "string", description: "电台 DJ 推荐语 / DJ recommendation, 100-200字/words" },
+      segue: { type: "string", description: "电台 DJ 口播推荐语，以情感氛围描写音乐，不提及歌名/歌手名，100-200字 / spoken DJ recommendation about emotion & atmosphere, no song/artist names, 100-200 words" },
       memory: {
         type: "array",
         items: {
@@ -499,7 +505,7 @@ function buildSchema() {
         }
       }
     },
-    required: ["say", "play", "memory"]
+    required: ["say", "play", "segue", "memory"]
   };
 }
 
@@ -1167,7 +1173,7 @@ async function runMiMoChat(prompt, schema, lang) {
     '  "confirmRecommend": "boolean (' + (isEn ? "optional" : "可选") + ')",',
     '  "confirmQuestion": "' + (isEn ? "string (optional, confirmation question)" : "string（可选，确认提问）") + '",',
     '  "play": [{"name":"string","artist":"string","album":"string?","query":"string?","provider":"string?"}] (' + (isEn ? "3-5 songs" : "3-5首歌") + '),',
-    '  "segue": "string (' + (isEn ? "optional, 100-200 word DJ recommendation speech, this is the ONLY place for recommendation content" : "可选，100-200字DJ推荐语，推荐内容只写在这里") + ')",',
+    '  "segue": "string (' + (isEn ? "required, 100-200 word spoken DJ recommendation, describe music through emotion & atmosphere, NO song/artist names, this is the ONLY place for recommendation content" : "必须，100-200字电台主播口播推荐语，以情感氛围描写音乐，不提及歌名/歌手名，推荐内容只写在这里") + ')",',
     '  "memory": [{"type":"string","text":"string"}] (' + (isEn ? "1-3 preference memories" : "1-3条偏好记忆") + ')',
     "}",
     ht("host.mimo.requiredFields", lang),
