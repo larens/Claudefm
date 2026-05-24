@@ -852,16 +852,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: true, state: await emitState("player:set-preferences") });
         return;
       }
-      if (msg.command === "speechRecognition.start") {
-        sendResponse({ ok: true });
-        startSpeechRecognition();
-        return;
-      }
-      if (msg.command === "speechRecognition.stop") {
-        sendResponse({ ok: true });
-        stopSpeechRecognition();
-        return;
-      }
       sendResponse({ ok: false, error: `unknown command: ${msg.command || ""}` });
     } catch (error) {
       await emitError(error, msg.command || "offscreen.command");
@@ -878,76 +868,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ---------------------------------------------------------------------------
 // Speech Recognition (runs in offscreen document with MICROPHONE reason)
-// ---------------------------------------------------------------------------
-
-let speechRecog = null;
-let speechRecogRecognizing = false;
-let speechRecogLang = "zh-CN";
-
-function initSpeechRecognition() {
-  if (speechRecog) return;
-  const SR = (typeof globalThis !== "undefined" && (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition))
-    || (typeof self !== "undefined" && (self.SpeechRecognition || self.webkitSpeechRecognition))
-    || (typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition));
-  if (!SR) return;
-  speechRecog = new SR();
-  speechRecog.lang = speechRecogLang;
-  speechRecog.interimResults = true;
-  speechRecog.continuous = false;
-
-  speechRecog.addEventListener("result", (event) => {
-    let finalText = "";
-    for (let i = event.resultIndex; i < event.results.length; i += 1) {
-      const r = event.results[i];
-      if (r.isFinal) {
-        finalText += (r[0]?.transcript ?? "").trim() + " ";
-      }
-    }
-    finalText = finalText.trim();
-    if (!finalText) return;
-    try {
-      chrome.runtime.sendMessage({ type: "speechRecognition.result", kind: "result", text: finalText });
-    } catch {}
-  });
-
-  speechRecog.addEventListener("error", (event) => {
-    const err = event?.error ? String(event.error) : "unknown";
-    speechRecogRecognizing = false;
-    try {
-      chrome.runtime.sendMessage({ type: "speechRecognition.result", kind: "error", error: err });
-    } catch {}
-  });
-
-  speechRecog.addEventListener("end", () => {
-    speechRecogRecognizing = false;
-    try {
-      chrome.runtime.sendMessage({ type: "speechRecognition.result", kind: "ended" });
-    } catch {}
-  });
-}
-
-function startSpeechRecognition() {
-  initSpeechRecognition();
-  if (!speechRecog) {
-    try {
-      chrome.runtime.sendMessage({ type: "speechRecognition.result", kind: "error", error: "not-supported" });
-    } catch {}
-    return;
-  }
-  if (speechRecogRecognizing) return;
-  speechRecogRecognizing = true;
-  try {
-    speechRecog.start();
-  } catch {
-    speechRecogRecognizing = false;
-    try {
-      chrome.runtime.sendMessage({ type: "speechRecognition.result", kind: "ended" });
-    } catch {}
-  }
-}
-
-function stopSpeechRecognition() {
-  if (!speechRecog || !speechRecogRecognizing) return;
-  try { speechRecog.stop(); } catch {}
-}
 

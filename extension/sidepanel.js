@@ -22,7 +22,6 @@ const elChat = document.getElementById("chat");
 const elInput = document.getElementById("input");
 const elSend = document.getElementById("send");
 const elBtnClear = document.getElementById("btnClear");
-const elBtnMic = document.getElementById("btnMic");
 const elComposerHint = document.getElementById("composerHint");
 const elAvatarBtn = document.getElementById("avatarBtn");
 const elAvatarFile = document.getElementById("avatarFile");
@@ -113,7 +112,6 @@ let userPaused = false;
 let segueSpokenInQueue = 0;
 let seeking = false;
 let hintTimer = null;
-let recognizing = false;
 let djName = "Claudefm";
 let preloadIndex = -1;
 let preloadStatus = "idle";
@@ -240,6 +238,7 @@ function applyPlayerState(state) {
     stopProgressTick();
   }
   setPlayingUI(playerPlaying);
+  if (elStatusDot && /(^|\s)(idle|playing)(\s|$)/.test(elStatusDot.className)) setStatus("idle");
   if (elInterruptHint) elInterruptHint.hidden = !interrupted;
   if (speechActive && activeSegueSegments.length) {
     if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
@@ -953,8 +952,14 @@ function setHint(text) {
 
 function setStatus(state, text) {
   if (!elStatusDot || !elStatusText) return;
-  elStatusDot.className = "statusDot " + (state || "idle");
-  elStatusText.textContent = state === "idle" ? (text || __t("空闲")) : (text || "");
+  const effectiveState = state || "idle";
+  if (effectiveState === "idle" && playerPlaying) {
+    elStatusDot.className = "statusDot playing";
+    elStatusText.textContent = text || __t("播放中");
+  } else {
+    elStatusDot.className = "statusDot " + effectiveState;
+    elStatusText.textContent = effectiveState === "idle" ? (text || __t("空闲")) : (text || "");
+  }
 }
 
 async function startNewSession() {
@@ -1700,13 +1705,6 @@ async function importHistoryFile(file) {
 
 function updateSendState() {
   const text = (elInput?.value ?? "").trim();
-  if (recognizing) {
-    elSend.disabled = false;
-    elSend.classList.add("enabled");
-    setButtonIcon(elSend, "stop");
-    elSend.setAttribute("aria-label", __t("结束语音"));
-    return;
-  }
   const enabled = text.length > 0;
   elSend.disabled = !enabled;
   elSend.classList.toggle("enabled", enabled);
@@ -1936,38 +1934,6 @@ port.onMessage.addListener(async (msg) => {
     else setHint(__t("播放异常：{0}", {0: message}));
     return;
   }
-  if (msg.type === "speechRecognition.result") {
-    const kind = msg.kind || "";
-    if (kind === "result") {
-      const text = msg.text ? String(msg.text).trim() : "";
-      if (text) {
-        const prev = (elInput.value ?? "").replace(/\s+$/g, "");
-        elInput.value = `${prev}${prev ? " " : ""}${text}`;
-        autosizeComposerInput();
-        updateSendState();
-        elInput.focus();
-      }
-    } else if (kind === "error") {
-      const err = msg.error ? String(msg.error) : "unknown";
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        setHint(__t("语音权限被拒绝"));
-      } else if (err === "no-speech") {
-        setHint(__t("未检测到语音"));
-      } else {
-        setHint(__t("语音识别失败：{0}", {0: err}));
-      }
-      recognizing = false;
-      elBtnMic.classList.remove("recording");
-      elBtnMic.setAttribute("aria-pressed", "false");
-      updateSendState();
-    } else if (kind === "ended") {
-      recognizing = false;
-      elBtnMic.classList.remove("recording");
-      elBtnMic.setAttribute("aria-pressed", "false");
-      updateSendState();
-    }
-    return;
-  }
   if (msg.type === "docToPodcastProgress") {
     if (msg.step === "fetching") {
       setHint(__t("正在抓取网页内容…"));
@@ -2013,10 +1979,6 @@ port.onMessage.addListener(async (msg) => {
 });
 
 elSend.addEventListener("click", async () => {
-  if (recognizing) {
-    chrome.runtime.sendMessage({ type: "speechRecognition.stop" });
-    return;
-  }
   if (pendingAssistantEl && pendingAssistantEl.isConnected) {
     setHint(__t("上一条还在生成回复…"));
     return;
@@ -2131,19 +2093,6 @@ elProgress.addEventListener("change", () => {
   const ratio = Number(elProgress.value) / 1000;
   void sendPlayerCommand("player.seek", { time: ratio * duration });
   seeking = false;
-});
-
-elBtnMic.addEventListener("click", async () => {
-  if (recognizing) {
-    chrome.runtime.sendMessage({ type: "speechRecognition.stop" });
-    return;
-  }
-  recognizing = true;
-  elBtnMic.classList.add("recording");
-  elBtnMic.setAttribute("aria-pressed", "true");
-  setHint(__t("正在聆听…"));
-  updateSendState();
-  chrome.runtime.sendMessage({ type: "speechRecognition.start" });
 });
 
 if (elBtnSoul && elSoulPanel) {

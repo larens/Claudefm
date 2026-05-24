@@ -78,7 +78,7 @@ async function ensureOffscreenDocument() {
   if (!creatingOffscreen) {
     creatingOffscreen = chrome.offscreen.createDocument({
       url: "offscreen.html",
-      reasons: ["WORKERS", "USER_MEDIA"],
+      reasons: ["WORKERS"],
       justification: "Keep the hidden playback runtime alive outside the side panel lifecycle and enable microphone for speech recognition.",
     });
   }
@@ -728,9 +728,6 @@ chrome.runtime.onConnect.addListener(async (port) => {
       const resolve = pendingLocationResolvers.get(port);
       if (resolve) resolve(msg);
     }
-    if (msg.type === "speechRecognition.start" || msg.type === "speechRecognition.stop") {
-      void sendOffscreenCommand(msg.type).catch(() => {});
-    }
   });
 });
 
@@ -759,11 +756,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.type === "player.errorBroadcast") {
         broadcast({ type: "player.error", error: msg.error || "", context: msg.context || "" });
-        sendResponse({ ok: true });
-        return;
-      }
-      if (msg.type === "speechRecognition.result") {
-        broadcast({ type: "speechRecognition.result", ...msg });
         sendResponse({ ok: true });
         return;
       }

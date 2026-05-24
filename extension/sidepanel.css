@@ -32,7 +32,7 @@ body {
   --surfaceHover: color-mix(in srgb, CanvasText 10%, Canvas 90%);
   --panel: color-mix(in srgb, CanvasText 4%, Canvas 96%);
   --panelShadow: rgba(20, 20, 26, 0.08);
-  --accent: #7a5cff;
+  --accent: #34c759;
   --green: #34c759;
   color-scheme: light dark;
 }
@@ -42,6 +42,9 @@ body {
     --bg: color-mix(in srgb, Canvas 94%, CanvasText 6%);
     --panel: color-mix(in srgb, CanvasText 6%, Canvas 94%);
     --panelShadow: rgba(0, 0, 0, 0.35);
+  }
+  .chat {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Ccircle cx='10' cy='10' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='50' cy='10' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='90' cy='10' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='30' cy='30' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='70' cy='30' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='110' cy='30' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='10' cy='50' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='50' cy='50' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='90' cy='50' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='30' cy='70' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='70' cy='70' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='110' cy='70' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='10' cy='90' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='50' cy='90' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='90' cy='90' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='30' cy='110' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='70' cy='110' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='110' cy='110' r='1.2' fill='%23ccc' opacity='.10'/%3E%3Ccircle cx='25' cy='55' r='8' fill='none' stroke='%23ccc' stroke-width='.4' opacity='.05'/%3E%3Ccircle cx='85' cy='25' r='6' fill='none' stroke='%23ccc' stroke-width='.4' opacity='.05'/%3E%3Ccircle cx='55' cy='85' r='10' fill='none' stroke='%23ccc' stroke-width='.4' opacity='.05'/%3E%3Cpath d='M60 55l3-6 3 6' fill='none' stroke='%23ccc' stroke-width='.5' opacity='.06'/%3E%3Cpath d='M15 80l3-6 3 6' fill='none' stroke='%23ccc' stroke-width='.5' opacity='.06'/%3E%3Cpath d='M95 60l3-6 3 6' fill='none' stroke='%23ccc' stroke-width='.5' opacity='.06'/%3E%3Cpath d='M40 15l2.5-2.5 2.5 2.5-2.5 2.5z' fill='none' stroke='%23ccc' stroke-width='.4' opacity='.05'/%3E%3Cpath d='M100 95l2.5-2.5 2.5 2.5-2.5 2.5z' fill='none' stroke='%23ccc' stroke-width='.4' opacity='.05'/%3E%3C/svg%3E");
   }
 }
 
@@ -211,14 +214,14 @@ body {
 }
 
 .settingsSwitch input:checked + .settingsSwitchTrack {
-  background: rgba(122, 92, 255, 0.28);
-  border-color: rgba(122, 92, 255, 0.35);
+  background: rgba(52, 199, 89, 0.28);
+  border-color: rgba(52, 199, 89, 0.35);
 }
 
 .settingsSwitch input:checked + .settingsSwitchTrack::after {
   transform: translateX(20px);
   background: color-mix(in srgb, CanvasText 10%, Canvas 90%);
-  border-color: rgba(122, 92, 255, 0.35);
+  border-color: rgba(52, 199, 89, 0.35);
 }
 
 .settingsLabel {
@@ -569,6 +572,11 @@ body {
   background: #34d399;
 }
 
+.statusDot.playing {
+  background: #34d399;
+  animation: statusPulse 1.6s ease-in-out infinite;
+}
+
 .statusDot.busy {
   background: #fbbf24;
   animation: statusPulse 1.2s ease-in-out infinite;
@@ -644,6 +652,7 @@ button:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Ccircle cx='10' cy='10' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='50' cy='10' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='90' cy='10' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='30' cy='30' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='70' cy='30' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='110' cy='30' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='10' cy='50' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='50' cy='50' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='90' cy='50' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='30' cy='70' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='70' cy='70' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='110' cy='70' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='10' cy='90' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='50' cy='90' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='90' cy='90' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='30' cy='110' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='70' cy='110' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='110' cy='110' r='1.2' fill='%23888' opacity='.12'/%3E%3Ccircle cx='25' cy='55' r='8' fill='none' stroke='%23888' stroke-width='.4' opacity='.06'/%3E%3Ccircle cx='85' cy='25' r='6' fill='none' stroke='%23888' stroke-width='.4' opacity='.06'/%3E%3Ccircle cx='55' cy='85' r='10' fill='none' stroke='%23888' stroke-width='.4' opacity='.06'/%3E%3Cpath d='M60 55l3-6 3 6' fill='none' stroke='%23888' stroke-width='.5' opacity='.07'/%3E%3Cpath d='M15 80l3-6 3 6' fill='none' stroke='%23888' stroke-width='.5' opacity='.07'/%3E%3Cpath d='M95 60l3-6 3 6' fill='none' stroke='%23888' stroke-width='.5' opacity='.07'/%3E%3Cpath d='M40 15l2.5-2.5 2.5 2.5-2.5 2.5z' fill='none' stroke='%23888' stroke-width='.4' opacity='.06'/%3E%3Cpath d='M100 95l2.5-2.5 2.5 2.5-2.5 2.5z' fill='none' stroke='%23888' stroke-width='.4' opacity='.06'/%3E%3C/svg%3E");
 }
 
 .msg {
@@ -657,8 +666,8 @@ button:hover {
 }
 
 .msg.user {
-  background: rgba(122, 92, 255, 0.18);
-  border: 1px solid rgba(122, 92, 255, 0.28);
+  background: rgba(52, 199, 89, 0.18);
+  border: 1px solid rgba(52, 199, 89, 0.28);
 }
 
 .msg.assistant {
@@ -674,7 +683,7 @@ button:hover {
 }
 .segue-msg .segue-char.segue-read {
   opacity: 1;
-  background-color: rgba(122, 92, 255, 0.18);
+  background-color: rgba(52, 199, 89, 0.18);
 }
 .segue-msg.segue-hidden {
   display: none;
@@ -759,8 +768,8 @@ button:hover {
 }
 
 .recommendBtn.primary {
-  background: rgba(122, 92, 255, 0.18);
-  border-color: rgba(122, 92, 255, 0.35);
+  background: rgba(52, 199, 89, 0.18);
+  border-color: rgba(52, 199, 89, 0.35);
 }
 
 .msg.assistant.pending {
@@ -948,8 +957,8 @@ button:hover {
 }
 
 .queueVoteBtn.active[data-kind="up"] {
-  color: rgba(122, 92, 255, 0.95);
-  border-color: rgba(122, 92, 255, 0.35);
+  color: rgba(52, 199, 89, 0.95);
+  border-color: rgba(52, 199, 89, 0.35);
 }
 
 .queueVoteBtn.active[data-kind="down"] {
@@ -970,7 +979,7 @@ button:hover {
   min-width: 0;
   min-height: 3px;
   height: 3px;
-  background: color-mix(in srgb, CanvasText 20%, Canvas 85%);
+  background: linear-gradient(to top, #34d399, #6ee7b7);
   border-radius: 2px;
   transition: height 0.25s ease;
   will-change: height;
@@ -1219,11 +1228,6 @@ button:hover {
   opacity: 0.45;
 }
 
-.toolBtn.recording {
-  border-color: rgba(255, 59, 48, 0.55);
-  box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.12);
-}
-
 .sendBtn {
   --icon-size: 18px;
   appearance: none;
@@ -1240,13 +1244,13 @@ button:hover {
 }
 
 .sendBtn.enabled {
-  background: rgba(122, 92, 255, 0.22);
-  border-color: rgba(122, 92, 255, 0.28);
+  background: rgba(52, 199, 89, 0.22);
+  border-color: rgba(52, 199, 89, 0.28);
   color: var(--text);
 }
 
 .sendBtn.enabled:hover {
-  background: rgba(122, 92, 255, 0.28);
+  background: rgba(52, 199, 89, 0.28);
 }
 
 .composerHint {
@@ -1313,13 +1317,13 @@ button:hover {
 }
 
 .podcastGenBtn {
-  background: rgba(122, 92, 255, 0.18);
-  border-color: rgba(122, 92, 255, 0.35);
+  background: rgba(52, 199, 89, 0.18);
+  border-color: rgba(52, 199, 89, 0.35);
   font-weight: 600;
 }
 
 .podcastGenBtn:hover {
-  background: rgba(122, 92, 255, 0.28);
+  background: rgba(52, 199, 89, 0.28);
 }
 
 .podcastGenBtn:disabled {
