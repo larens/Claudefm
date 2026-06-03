@@ -404,13 +404,16 @@ async function playAt(index) {
     speechPaused = false;
     schedulePreloadForNextTrack();
 
-    // 使用预生成的 TTS 音频 URL 或按需生成
+    // 使用预生成的 TTS 音频 URL，失败时回退到按需生成
+    let ttsPlayed = false;
     if (track.ttsAudioUrl) {
-      const ttsResult = await playTtsFromUrl(track.ttsAudioUrl, token);
-      console.log(`[offscreen] playAt(${index}) playTtsFromUrl returned: ${ttsResult}, token=${token}, playRequestToken=${playRequestToken}`);
-    } else {
-      const ttsResult = await playTtsAudio(text, token);
-      console.log(`[offscreen] playAt(${index}) playTtsAudio returned: ${ttsResult}, token=${token}, playRequestToken=${playRequestToken}`);
+      ttsPlayed = await playTtsFromUrl(track.ttsAudioUrl, token);
+      console.log(`[offscreen] playAt(${index}) playTtsFromUrl returned: ${ttsPlayed}, token=${token}, playRequestToken=${playRequestToken}`);
+    }
+    if (!ttsPlayed && token === playRequestToken) {
+      if (track.ttsAudioUrl) console.log(`[offscreen] playAt(${index}) playTtsFromUrl failed, falling back to playTtsAudio`);
+      ttsPlayed = await playTtsAudio(text, token);
+      console.log(`[offscreen] playAt(${index}) playTtsAudio returned: ${ttsPlayed}, token=${token}, playRequestToken=${playRequestToken}`);
     }
     if (token !== playRequestToken) { console.log(`[offscreen] playAt(${index}) token mismatch, skipping playNext`); return snapshotState(); }
 
@@ -645,6 +648,14 @@ async function resetPlayer() {
   try {
     activeAudio.currentTime = 0;
   } catch {}
+  // 停止 TTS 推荐语音频，防止与新会话重叠
+  ++playRequestToken;
+  if (speechAudioEl) {
+    try { speechAudioEl.pause(); } catch {}
+    try { speechAudioEl.currentTime = 0; } catch {}
+    try { speechAudioEl.src = ""; speechAudioEl.load(); } catch {}
+    speechAudioEl = null;
+  }
   resetAudioElement(activeAudio);
   resetAudioElement(preloadAudio);
   if ("speechSynthesis" in window) {
@@ -794,8 +805,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg.command === "player.nextBatchResult") {
         nextBatchInFlight = false;
-        // Skip if podcast (speech) items are in queue — don't mix in music
-        if (queue.some(t => isSpeechItem(t))) {
+        // Skip if pending speech items remain after current position — don't mix in music mid-segue
+        const hasPendingSpeech = queue.slice(queueIndex + 1).some(t => isSpeechItem(t));
+        if (hasPendingSpeech) {
           sendResponse({ ok: true });
           return;
         }

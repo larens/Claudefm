@@ -134,6 +134,7 @@ let activeSegueSegmentIdx = -1;
 let activeSegueLastCharIdx = -1;
 let segueHighlightTimer = null;
 let segueHighlightStart = 0;
+let lastSegueText = "";
 
 let userNickname = "";
 let userAvatarDataUrl = "";
@@ -457,6 +458,9 @@ function splitSegueSegments(text) {
 }
 
 function appendSegueMessage(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized || normalized === lastSegueText) return;
+  lastSegueText = normalized;
   finishActiveSegue();
   const parts = splitSegueSegments(text);
   if (!parts.length) return;
@@ -482,7 +486,7 @@ function appendSegueMessage(text) {
   elChat.scrollTop = elChat.scrollHeight;
   activeSegueSegmentIdx = 0;
   activeSegueLastCharIdx = -1;
-  startFallbackHighlight(totalChars);
+  // 字幕不自动进展，只在音频 speech:progress 事件驱动下进展
 }
 
 function startFallbackHighlight(totalChars) {
@@ -546,6 +550,7 @@ function finishActiveSegue() {
   activeSegueSegments = [];
   activeSegueSegmentIdx = -1;
   activeSegueLastCharIdx = -1;
+  lastSegueText = "";
 }
 
 function clearRecommendCard() {
@@ -975,8 +980,12 @@ async function startNewSession() {
   activeSegueSegmentIdx = -1;
   activeSegueLastCharIdx = -1;
   if (segueHighlightTimer) { clearInterval(segueHighlightTimer); segueHighlightTimer = null; }
+  lastSegueText = "";
   sessionMessages = [];
   await clearSavedSession();
+
+  // 通知 background 重置推荐状态，触发新一轮自动推荐
+  try { port.postMessage({ type: "resetSession" }); } catch {}
 }
 
 function setSoulStatus(text) {

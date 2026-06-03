@@ -728,6 +728,11 @@ chrome.runtime.onConnect.addListener(async (port) => {
       const resolve = pendingLocationResolvers.get(port);
       if (resolve) resolve(msg);
     }
+    if (msg.type === "resetSession") {
+      autoRecommendDone = false;
+      welcomeInFlight = false;
+      void maybeWelcome(port);
+    }
   });
 });
 
