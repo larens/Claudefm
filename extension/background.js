@@ -7,6 +7,7 @@ const pendingLocationResolvers = new Map();
 let externalInterruptActive = false;
 let welcomeInFlight = false;
 let autoRecommendDone = false;
+let welcomeGeneration = 0;
 let currentLang = "zh";
 
 function bgT(zh, en) {
@@ -590,12 +591,14 @@ async function maybeWelcome(port) {
   if (autoRecommendDone) return;
 
   welcomeInFlight = true;
+  const gen = welcomeGeneration;
   try {
     const ensure = await sendNative({
       type: "ensureMusicFile",
       lang: currentLang,
       templatePath: MEMORY_TEMPLATE_PATH,
     });
+    if (gen !== welcomeGeneration) return;
     if (!ensure?.ok) {
       console.warn("[ClaudeFM] Init music.md failed:", ensure?.error);
       broadcast({
@@ -623,6 +626,7 @@ async function maybeWelcome(port) {
     const votes = trackVotesV1 && typeof trackVotesV1 === "object" ? trackVotesV1 : {};
 
     const loc = await requestLocationFromPort(port);
+    if (gen !== welcomeGeneration) return;
     const lat = loc?.coords?.latitude;
     const lon = loc?.coords?.longitude;
     const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
@@ -646,6 +650,7 @@ async function maybeWelcome(port) {
     };
 
     const resp = await sendNative(payload);
+    if (gen !== welcomeGeneration) return;
     if (resp?.ok) {
       if (resp.profileSummary) {
         await chrome.storage.local.set({ profileSummary: resp.profileSummary });
@@ -731,6 +736,7 @@ chrome.runtime.onConnect.addListener(async (port) => {
     if (msg.type === "resetSession") {
       autoRecommendDone = false;
       welcomeInFlight = false;
+      welcomeGeneration++;
       void maybeWelcome(port);
     }
   });
