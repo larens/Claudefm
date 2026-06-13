@@ -736,8 +736,8 @@ chrome.runtime.onConnect.addListener(async (port) => {
     if (msg.type === "resetSession") {
       autoRecommendDone = false;
       welcomeInFlight = false;
-      // 停止当前播放的 TTS 推荐语和音乐（由 sidepanel 的 startNewSession 处理）
-      // 不在这里调用 maybeWelcome，避免重复播放推荐语
+      welcomeGeneration++;
+      void maybeWelcome(port);
     }
   });
 });
