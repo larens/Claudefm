@@ -14,6 +14,7 @@ Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + �
 
 - `extension/`：Chrome 扩展与 Side Panel UI
 - `host/`：Native Messaging Host、安装脚本、平台配置模板
+- `services/`：后端服务（NeteaseCloudMusicApi 等）
 - `docs/`：模板与设计文档
 
 ## 功能概览
@@ -45,6 +46,7 @@ Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + �
            │ Fetch (cloudsearch + song/url)
            ▼
       http://localhost:3000/*             Claudefm data dir
+      services/ncm-api/                  (music.md, list.md, cache/)
       (NeteaseCloudMusicApi)
 
   文档转播客 URL 抓取优先级：
@@ -60,7 +62,6 @@ Claudefm 是一个 Chromium Side Panel 扩展，把"DJ 对话 + 歌单推荐 + �
 - Node.js `>=18`（推荐）
 - Python 3（可选，Node.js 不可用时回退使用）
 - Claude Code CLI 可执行，命令为 `claude`
-- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 本地服务（音乐音源）
 
 ### 1. 加载扩展
 
@@ -88,22 +89,17 @@ node host/install.mjs --extensionId <ID>
 
 ### 3. 启动音乐源（NeteaseCloudMusicApi）
 
-音乐播放依赖本地运行的 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 服务。安装并启动：
+音乐播放依赖本地运行的 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 服务。项目已集成该服务，位于 `services/ncm-api/`。
 
 ```bash
-# 安装（方式一：npm 全局模块）
-mkdir NeteaseCloudMusicApi && cd NeteaseCloudMusicApi
-npm init -y && npm install NeteaseCloudMusicApi
-node -e "require('NeteaseCloudMusicApi').serveNcmApi({port:3000,checkVersion:false})"
+# 首次使用需安装依赖
+cd services/ncm-api && npm install
 
-# 或安装（方式二：克隆仓库后运行）
-git clone https://github.com/Binaryify/NeteaseCloudMusicApi.git
-cd NeteaseCloudMusicApi && npm install && node app.js
+# 启动服务
+npm start
 ```
 
 服务默认运行在 `http://localhost:3000`。启动后无需额外配置，扩展会自动连接。
-
-> 原始仓库可能因版权原因归档，可搜索社区活跃 fork 替代。也可通过 npm 直接安装 `NeteaseCloudMusicApi` 包。
 
 ### 4. 配置 TTS（推荐语语音）
 

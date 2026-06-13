@@ -14,6 +14,7 @@ Claudefm is a Chromium Side Panel extension that turns DJ chat, playlist recomme
 
 - `extension/`: Chrome extension and Side Panel UI
 - `host/`: Native Messaging host, installer, and platform config templates
+- `services/`: backend services (NeteaseCloudMusicApi, etc.)
 - `docs/`: templates and design notes
 
 ## Features
@@ -53,6 +54,7 @@ Claudefm is a Chromium Side Panel extension that turns DJ chat, playlist recomme
            │ Fetch (cloudsearch + song/url)
            ▼
       http://localhost:3000/*             Claudefm data dir
+      services/ncm-api/                  (music.md, list.md, cache/)
       (NeteaseCloudMusicApi)
 
   Podcast URL fetch priority:
@@ -68,7 +70,6 @@ Claudefm is a Chromium Side Panel extension that turns DJ chat, playlist recomme
 - Node.js `>=18` (recommended)
 - Python 3 (optional, fallback when Node.js is unavailable)
 - Claude Code CLI available as `claude`
-- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) local service (music source)
 
 ### 1. Load The Extension
 
@@ -96,22 +97,17 @@ The installer will automatically:
 
 ### 3. Start Music Source (NeteaseCloudMusicApi)
 
-Music playback depends on a locally running [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) service. Install and start it:
+Music playback depends on a locally running [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) service. The project has integrated this service in `services/ncm-api/`.
 
 ```bash
-# Option A: install via npm
-mkdir NeteaseCloudMusicApi && cd NeteaseCloudMusicApi
-npm init -y && npm install NeteaseCloudMusicApi
-node -e "require('NeteaseCloudMusicApi').serveNcmApi({port:3000,checkVersion:false})"
+# Install dependencies (first time only)
+cd services/ncm-api && npm install
 
-# Option B: clone the repo
-git clone https://github.com/Binaryify/NeteaseCloudMusicApi.git
-cd NeteaseCloudMusicApi && npm install && node app.js
+# Start the service
+npm start
 ```
 
 The service runs on `http://localhost:3000` by default. No additional configuration is needed — the extension connects automatically.
-
-> The original repository may be archived due to copyright reasons. Search for active community forks or install the `NeteaseCloudMusicApi` npm package directly.
 
 ### 4. Configure TTS (DJ Voice)
 

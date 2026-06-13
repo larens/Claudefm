@@ -984,7 +984,7 @@ async function startNewSession() {
   sessionMessages = [];
   await clearSavedSession();
 
-  // 通知 background 重置推荐状态，触发新一轮自动推荐
+  // 通知 background 重置推荐状态（不触发自动推荐）
   try { port.postMessage({ type: "resetSession" }); } catch {}
 }
 

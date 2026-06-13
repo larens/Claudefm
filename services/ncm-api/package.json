@@ -1,0 +1,14 @@
+{
+  "name": "claudefm-ncm-api",
+  "version": "1.0.0",
+  "description": "NeteaseCloudMusicApi service for Claudefm",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node start.cjs",
+    "dev": "node start.cjs"
+  },
+  "dependencies": {
+    "NeteaseCloudMusicApi": "^4.32.0"
+  }
+}
